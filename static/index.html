@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registro de asistencia</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell header-content">
+      <div><div class="eyebrow">GESTIÓN DE CLASES</div><h1>Registro de asistencia</h1><p>Clases, estudiantes e inasistencias en un solo lugar.</p></div>
+      <div class="header-actions"><div class="header-badge">Guardado en este computador</div><button id="student-button" type="button" class="header-auth">Ingresar como estudiante</button><button id="admin-button" type="button" class="header-auth">Ingresar como administrador</button></div>
+    </div>
+  </header>
+  <main class="shell">
+    <div id="message" class="message" role="status" hidden></div>
+    <nav class="tabs" role="tablist" aria-label="Apartados de la aplicación">
+      <button id="tab-classes" class="tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-classes" data-panel="classes">Agregar clases</button>
+      <button id="tab-record" class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-record" data-panel="record">Registro de asistencia</button>
+      <button id="tab-editor" class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-editor" data-panel="editor">Editor de clases</button>
+      <button id="tab-setup" class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-setup" data-panel="setup" hidden>Estudiantes y ramos</button>
+    </nav>
+    <div id="panel-setup" role="tabpanel" aria-labelledby="tab-setup" hidden>
+    <section class="setup-grid" aria-label="Configuración">
+      <form id="student-form" class="card compact"><h2>Agregar estudiante</h2><label for="student-name">Nombre completo</label><div class="inline"><input id="student-name" name="name" required maxlength="120" placeholder="Ej: Salvador Allende"><button type="submit">Agregar</button></div></form>
+      <form id="subject-form" class="card compact"><h2>Agregar ramo</h2><label for="subject-name">Nombre del ramo</label><div class="inline"><input id="subject-name" name="name" required maxlength="120" placeholder="Ej: Med Interna"><button type="submit">Agregar</button></div></form>
+    </section>
+    <section class="card workspace"><div class="section-head"><div><div class="eyebrow">ESTUDIANTES DEL SISTEMA</div><h2>Modificar estudiantes</h2></div><span class="hint">Cada estudiante aparece en todos los ramos.</span></div><div id="students-list" class="students-list"></div></section>
+    <section class="card workspace"><div class="section-head"><div><div class="eyebrow">RAMOS DEL SISTEMA</div><h2>Modificar ramos</h2></div><span class="hint">Puedes cambiar el nombre o eliminar un ramo.</span></div><div id="subjects-list" class="students-list"></div></section>
+    </div>
+    <div id="panel-classes" role="tabpanel" aria-labelledby="tab-classes">
+    <section class="card workspace">
+      <div class="section-head"><div><div class="eyebrow">HISTORIAL POR RAMO</div><h2>Clases realizadas</h2></div><label class="subject-picker">Mostrar clases de<select id="subject-filter"><option value="all">Todos los ramos</option></select></label></div>
+      <form id="session-form" class="session-form"><div><label for="add-subject">Ramo de la nueva clase</label><select id="add-subject" required><option value="">Selecciona un ramo</option></select></div><div><label for="class-date">Fecha</label><input id="class-date" type="date" required></div><div class="grow"><label for="class-title">Tema (opcional)</label><input id="class-title" maxlength="120" placeholder="Ej: Fisiopatología del amor"></div><button type="submit">Agregar clase</button></form>
+      <div id="sessions-empty" class="empty">Selecciona o crea un ramo para ver sus clases.</div>
+      <div id="sessions-list" class="session-list"></div>
+    </section>
+    </div>
+    <div id="panel-editor" role="tabpanel" aria-labelledby="tab-editor" hidden>
+      <section class="card workspace"><div class="section-head"><div><div class="eyebrow">CORREGIR CLASES</div><h2>Editor de clases</h2></div><label class="subject-picker">Mostrar clases de<select id="editor-filter"><option value="all">Todos los ramos</option></select></label></div><div id="editor-list" class="session-list"></div></section>
+    </div>
+    <div id="panel-record" role="tabpanel" aria-labelledby="tab-record" hidden>
+    <section class="card workspace"><div class="section-head"><div><div class="eyebrow">RESUMEN DE ASISTENCIA</div><h2>Inasistencias por estudiante</h2></div><label class="subject-picker">Mostrar asistencia de<select id="report-subject-filter"><option value="all">Todos los ramos</option></select></label></div><p class="hint">Toda clase sin asistencia marcada cuenta como inasistencia.</p><div id="report-empty" class="empty">Agrega estudiantes para ver el resumen.</div><div id="report-list" class="report-list"></div></section>
+    <section class="card workspace"><div class="section-head"><div><div class="eyebrow">TODOS LOS RAMOS</div><h2>Calendario de clases</h2></div><label class="subject-picker">Estudiante<select id="calendar-student"><option value="">Todos los estudiantes</option></select></label></div><div class="calendar-toolbar"><button type="button" id="calendar-prev" class="secondary-button" aria-label="Mes anterior">‹</button><strong id="calendar-month"></strong><button type="button" id="calendar-next" class="secondary-button" aria-label="Mes siguiente">›</button></div><div class="calendar-weekdays"><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span></div><div id="calendar-grid" class="calendar-grid"></div><div class="calendar-legend"><span><i class="legend-dot"></i>Clase registrada</span><span><i class="legend-dot absent-dot"></i>Falta del estudiante seleccionado</span></div><div id="calendar-detail" class="calendar-detail">Selecciona un día para ver sus clases.</div></section>
+    <section class="card workspace"><div class="section-head"><div><div class="eyebrow">EXPORTAR REGISTROS</div><h2>Descargar Excel</h2></div></div><p class="hint">Selecciona los estudiantes y ramos que quieres incluir. El archivo muestra las faltas automáticas y las marcas de asistencia de cada clase.</p><form id="export-form"><div class="export-grid"><fieldset><legend>Estudiantes</legend><label class="export-choice"><input id="export-all-students" type="checkbox" checked>Todos los estudiantes</label><div id="export-students-list" class="export-options"></div></fieldset><fieldset><legend>Ramos</legend><label class="export-choice"><input id="export-all-subjects" type="checkbox" checked>Todos los ramos</label><div id="export-subjects-list" class="export-options"></div></fieldset></div><div class="export-footer"><button id="export-download" type="submit">Descargar .xlsx</button><span id="export-count" class="hint"></span></div></form><p class="hint">Este Excel sirve para consultar y compartir los datos seleccionados. Para restaurar el programa, conserva también el archivo <strong>asistencia.db</strong>.</p></section>
+    </div>
+  </main>
+  <dialog id="attendance-dialog"><div class="dialog-head"><div><div class="eyebrow">REGISTRO POR CLASE</div><h2 id="dialog-title">Asistencia</h2><p id="dialog-subtitle"></p></div><button type="button" id="close-dialog" class="icon-button" aria-label="Cerrar">×</button></div><div id="attendance-list"></div><div class="dialog-footer"><span>Quien no tenga una marca de asistencia se considera ausente.</span><button type="button" id="done-dialog">Listo</button></div></dialog>
+  <dialog id="admin-dialog"><div class="dialog-head"><div><div class="eyebrow">ACCESO DEL ADMINISTRADOR</div><h2 id="admin-dialog-title">Ingresar</h2><p id="admin-dialog-info"></p></div><button type="button" id="close-admin-dialog" class="icon-button" aria-label="Cerrar">×</button></div><form id="admin-form" class="admin-form"><label for="admin-password">Contraseña</label><input id="admin-password" type="password" autocomplete="current-password" required><div id="admin-confirm-wrap" hidden><label for="admin-confirm">Repite la contraseña</label><input id="admin-confirm" type="password" autocomplete="new-password"></div><button id="admin-submit" type="submit">Ingresar</button></form></dialog>
+  <dialog id="student-dialog"><div class="dialog-head"><div><div class="eyebrow">ACCESO DEL ESTUDIANTE</div><h2 id="student-dialog-title">Ingresar</h2><p id="student-dialog-info">Selecciona tu nombre y escribe tu contraseña.</p></div><button type="button" id="close-student-dialog" class="icon-button" aria-label="Cerrar">×</button></div><div class="student-mode"><button id="student-login-mode" type="button" class="secondary-button">Ingresar</button><button id="student-first-mode" type="button" class="secondary-button">Primera vez</button></div><form id="student-login-form" class="admin-form"><label for="student-login-name">Tu nombre</label><select id="student-login-name" required></select><label for="student-login-password">Contraseña</label><input id="student-login-password" type="password" autocomplete="current-password" required><button type="submit">Ingresar</button></form><form id="student-code-form" class="admin-form" hidden><label for="student-register-name">Tu nombre</label><select id="student-register-name" required></select><label for="student-activation-code">Código de activación</label><input id="student-activation-code" autocomplete="one-time-code" maxlength="5" minlength="5" placeholder="5 caracteres" required><button type="submit">Validar código</button></form><form id="student-register-form" class="admin-form" hidden><label for="student-register-password">Crea una contraseña (6 caracteres, una mayúscula y un número)</label><input id="student-register-password" type="password" autocomplete="new-password" minlength="6" required><label for="student-register-confirm">Repite la contraseña</label><input id="student-register-confirm" type="password" autocomplete="new-password" minlength="6" required><button type="submit">Crear contraseña</button></form></dialog>
+  <dialog id="activation-dialog"><div class="dialog-head"><div><div class="eyebrow">CÓDIGO DE ACTIVACIÓN</div><h2 id="activation-dialog-title">Código del estudiante</h2><p>Entrega este código al estudiante. Se muestra una sola vez.</p></div><button type="button" id="close-activation-dialog" class="icon-button" aria-label="Cerrar">×</button></div><div class="activation-body"><output id="activation-code"></output><button id="copy-activation-code" type="button" class="secondary-button">Copiar código</button><p>El estudiante lo ingresará en <strong>Ingresar como estudiante → Primera vez</strong>. Si pierdes el código, puedes generar otro desde <strong>Editar → Restablecer contraseña</strong>.</p></div></dialog>
+  <script src="/app.js"></script>
+</body>
+</html>

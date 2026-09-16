@@ -1,0 +1,9 @@
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+__pycache__/
+*.py[cod]
+.env
+storage/
+backups/
