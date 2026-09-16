@@ -521,6 +521,10 @@ class Handler(BaseHTTPRequestHandler):
                         subject_id = None if subject_raw == "all" else positive_id({"subject_id": subject_raw}, "subject_id")
                         if subject_id:
                             exists(con, "subjects", subject_id)
+                        student_raw = query.get("student_id", ["all"])[0]
+                        student_id = None if student_raw == "all" else positive_id({"student_id": student_raw}, "student_id")
+                        if student_id:
+                            exists(con, "students", student_id)
                         result = rows(con, """
                             SELECT st.id, st.name,
                                    COUNT(s.id) AS total_classes,
@@ -530,8 +534,9 @@ class Handler(BaseHTTPRequestHandler):
                             FROM students st
                             LEFT JOIN sessions s ON (? IS NULL OR s.subject_id = ?)
                             LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = st.id
+                            WHERE (? IS NULL OR st.id = ?)
                             GROUP BY st.id ORDER BY st.name
-                        """, (subject_id, subject_id))
+                        """, (subject_id, subject_id, student_id, student_id))
                         for item in result:
                             item["attendance_percent"] = (
                                 round(100 * item["present"] / item["total_classes"], 1)

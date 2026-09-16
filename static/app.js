@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 let overview = { students: [], subjects: [] };
 let currentSubject = 'all';
 let reportSubject = 'all';
+let reportStudent = 'all';
 let addSubject = null;
 let editorFilter = 'all';
 let calendarMonth = new Date();
@@ -54,6 +55,8 @@ async function loadOverview() {
   renderExportChoices();
   if (!overview.students.some(s => s.id === Number(calendarStudent))) calendarStudent = null;
   fillSelect('calendar-student', overview.students, 'Todos los estudiantes', calendarStudent);
+  if (reportStudent !== 'all' && !overview.students.some(s => s.id === Number(reportStudent))) reportStudent = 'all';
+  fillSelect('report-student-filter', overview.students, 'Todos los estudiantes', reportStudent, 'all');
   if (currentSubject !== 'all' && !overview.subjects.some(s => s.id === Number(currentSubject))) currentSubject = 'all';
   if (reportSubject !== 'all' && !overview.subjects.some(s => s.id === Number(reportSubject))) reportSubject = 'all';
   if (editorFilter !== 'all' && !overview.subjects.some(s => s.id === Number(editorFilter))) editorFilter = 'all';
@@ -85,9 +88,12 @@ async function loadStudentStatus() {
     ? `Cerrar sesión de ${studentState.name}` : 'Ingresar como estudiante';
   if (studentState.authenticated) {
     calendarStudent = studentState.student_id;
+    reportStudent = studentState.student_id;
     if (overview.students.some(student => student.id === calendarStudent)) {
       $('calendar-student').value = String(calendarStudent);
+      $('report-student-filter').value = String(reportStudent);
       await refreshCalendar();
+      await refreshReport();
     }
   }
 }
@@ -323,10 +329,11 @@ async function refreshSubject() {
 
 async function refreshReport() {
   const subject = reportSubject;
+  const student = reportStudent;
   $('report-list').replaceChildren();
   $('report-empty').hidden = true;
-  const report = await api(`/api/report?subject_id=${subject}`);
-  if (subject !== reportSubject) return;
+  const report = await api(`/api/report?subject_id=${subject}&student_id=${student}`);
+  if (subject !== reportSubject || student !== reportStudent) return;
   renderReport(report);
 }
 
@@ -604,6 +611,10 @@ $('subject-filter').addEventListener('change', async event => {
 });
 $('report-subject-filter').addEventListener('change', async event => {
   reportSubject = event.target.value === 'all' ? 'all' : Number(event.target.value);
+  try { await refreshReport(); } catch (error) { message(error.message, true); }
+});
+$('report-student-filter').addEventListener('change', async event => {
+  reportStudent = event.target.value === 'all' ? 'all' : Number(event.target.value);
   try { await refreshReport(); } catch (error) { message(error.message, true); }
 });
 $('editor-filter').addEventListener('change', async event => {
