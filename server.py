@@ -20,6 +20,7 @@ from xlsx_export import make_export
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC_MODE = os.environ.get("ASISTENCIA_PUBLIC_MODE") == "1"
+TRUSTED_PERSISTENT_DIR = os.environ.get("ASISTENCIA_TRUST_PERSISTENT_DIR") == "1"
 DATA_DIR = Path(os.environ["ASISTENCIA_DATA_DIR"]) if os.environ.get("ASISTENCIA_DATA_DIR") else ROOT
 DB = DATA_DIR / "asistencia.db"
 STATIC = ROOT / "static"
@@ -29,7 +30,9 @@ def check_data_storage():
     if PUBLIC_MODE:
         if not os.environ.get("ASISTENCIA_DATA_DIR") or not DATA_DIR.is_absolute():
             raise RuntimeError("En internet, ASISTENCIA_DATA_DIR debe apuntar a un disco persistente absoluto.")
-        if not DATA_DIR.is_dir() or not os.path.ismount(DATA_DIR):
+        if TRUSTED_PERSISTENT_DIR:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+        elif not DATA_DIR.is_dir() or not os.path.ismount(DATA_DIR):
             raise RuntimeError("El disco persistente no está montado. Se detiene el servidor para proteger los datos.")
     else:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
