@@ -82,7 +82,8 @@ def init_db():
             event_date TEXT NOT NULL,
             event_type TEXT NOT NULL,
             title TEXT NOT NULL,
-            details TEXT NOT NULL DEFAULT ''
+            details TEXT NOT NULL DEFAULT '',
+            color TEXT NOT NULL DEFAULT '#7c3aed'
         );
         CREATE TABLE IF NOT EXISTS admin_account (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -130,6 +131,12 @@ def init_db():
             for column in ("failed_attempts", "first_failed_at", "login_locked"):
                 if column not in existing:
                     con.execute(f"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
+        event_columns = {row[1] for row in con.execute("PRAGMA table_info(calendar_events)")}
+        if "color" not in event_columns:
+            con.execute("ALTER TABLE calendar_events ADD COLUMN color TEXT NOT NULL DEFAULT '#7c3aed'")
+        con.execute("UPDATE calendar_events SET event_type = 'Prueba' WHERE event_type = 'Certamen'")
+        con.execute("UPDATE calendar_events SET event_type = 'Otro' WHERE event_type = 'Seminario'")
+        con.commit()
         columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
         if "class_number" not in columns:
             # Migra la versión anterior sin perder clases ni asistencia.
@@ -594,7 +601,7 @@ class Handler(BaseHTTPRequestHandler):
                             exists(con, "subjects", subject_id)
                         result = rows(con, """
                             SELECT e.id, e.subject_id, sub.name AS subject_name,
-                                   e.event_date, e.event_type, e.title, e.details
+                                   e.event_date, e.event_type, e.title, e.details, e.color
                             FROM calendar_events e
                             JOIN subjects sub ON sub.id = e.subject_id
                             WHERE e.event_date >= ? AND e.event_date < ?
@@ -849,17 +856,21 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError:
                         raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
                     event_type = required_text(data, "event_type", 30)
-                    if event_type not in {"Certamen", "Presentación", "Seminario", "Otro"}:
+                    if event_type not in {"Prueba", "Presentación", "Otro"}:
                         raise ValueError("Selecciona un tipo de evento válido.")
                     title = required_text(data, "title")
                     details = data.get("details", "")
                     if not isinstance(details, str) or len(details.strip()) > 300:
                         raise ValueError("La descripción es demasiado larga.")
+                    color = data.get("color")
+                    if not isinstance(color, str) or len(color) != 7 or color[0] != "#" or any(
+                            char not in "0123456789abcdefABCDEF" for char in color[1:]):
+                        raise ValueError("Selecciona un color válido.")
                     cur = con.execute("""INSERT INTO calendar_events
-                        (subject_id, event_date, event_type, title, details) VALUES (?, ?, ?, ?, ?)""",
-                        (subject_id, event_date, event_type, title, details.strip()))
+                        (subject_id, event_date, event_type, title, details, color) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (subject_id, event_date, event_type, title, details.strip(), color.lower()))
                     result = {"id": cur.lastrowid, "subject_id": subject_id, "event_date": event_date,
-                              "event_type": event_type, "title": title, "details": details.strip()}
+                              "event_type": event_type, "title": title, "details": details.strip(), "color": color.lower()}
                 else:
                     self.send_json({"error": "Ruta no encontrada."}, 404)
                     return
@@ -900,17 +911,21 @@ class Handler(BaseHTTPRequestHandler):
                         except ValueError:
                             raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
                         event_type = required_text(data, "event_type", 30)
-                        if event_type not in {"Certamen", "Presentación", "Seminario", "Otro"}:
+                        if event_type not in {"Prueba", "Presentación", "Otro"}:
                             raise ValueError("Selecciona un tipo de evento válido.")
                         title = required_text(data, "title")
                         details = data.get("details", "")
                         if not isinstance(details, str) or len(details.strip()) > 300:
                             raise ValueError("La descripción es demasiado larga.")
+                        color = data.get("color")
+                        if not isinstance(color, str) or len(color) != 7 or color[0] != "#" or any(
+                                char not in "0123456789abcdefABCDEF" for char in color[1:]):
+                            raise ValueError("Selecciona un color válido.")
                         con.execute("""UPDATE calendar_events SET subject_id = ?, event_date = ?,
-                            event_type = ?, title = ?, details = ? WHERE id = ?""",
-                            (subject_id, event_date, event_type, title, details.strip(), item_id))
+                            event_type = ?, title = ?, details = ?, color = ? WHERE id = ?""",
+                            (subject_id, event_date, event_type, title, details.strip(), color.lower(), item_id))
                         result = {"id": item_id, "subject_id": subject_id, "event_date": event_date,
-                                  "event_type": event_type, "title": title, "details": details.strip()}
+                                  "event_type": event_type, "title": title, "details": details.strip(), "color": color.lower()}
                     else:
                         con.execute("DELETE FROM calendar_events WHERE id = ?", (item_id,))
                         result = {"deleted": item_id}

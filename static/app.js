@@ -15,6 +15,7 @@ eventMonth.setDate(1);
 let eventSubject = 'all';
 let calendarEvents = [];
 let selectedEventDate = null;
+let editingEventId = null;
 let adminState = { configured: false, authenticated: false };
 let studentState = { authenticated: false, student_id: null, name: null };
 let studentActivation = null;
@@ -611,6 +612,15 @@ function renderEventCalendar() {
     button.setAttribute('aria-label', `${readableDate(iso)}: ${entries.length} evento${entries.length === 1 ? '' : 's'}`);
     button.append(element('span', 'day-number', day));
     if (entries.length) button.append(element('span', 'day-count', `${entries.length} evento${entries.length === 1 ? '' : 's'}`));
+    if (entries.length) {
+      const colors = element('span', 'event-colors');
+      entries.slice(0, 4).forEach(item => {
+        const dot = element('i', 'event-color-dot');
+        dot.style.backgroundColor = item.color;
+        colors.append(dot);
+      });
+      button.append(colors);
+    }
     button.addEventListener('click', () => {
       selectedEventDate = iso;
       if (adminState.authenticated) $('event-date').value = iso;
@@ -634,32 +644,31 @@ function renderEventDetail() {
   const list = element('div', 'event-list');
   entries.forEach(item => {
     const row = element('div', 'event-item');
+    row.style.borderLeftColor = item.color;
     const text = element('div');
-    text.append(element('strong', '', `${item.event_type} · ${item.subject_name}`),
+    const heading = element('strong', 'event-heading');
+    const color = element('i', 'event-color-dot');
+    color.style.backgroundColor = item.color;
+    heading.append(color, document.createTextNode(`${item.event_type} · ${item.subject_name}`));
+    text.append(heading,
       element('p', '', item.title), item.details ? element('small', '', item.details) : document.createTextNode(''));
     row.append(text);
     if (adminState.authenticated) {
       const actions = element('div', 'event-actions');
       const edit = element('button', 'secondary-button', 'Editar');
       edit.type = 'button';
-      edit.addEventListener('click', async () => {
-        const title = prompt('Título del evento:', item.title);
-        if (title === null) return;
-        const eventDate = prompt('Fecha (AAAA-MM-DD):', item.event_date);
-        if (eventDate === null) return;
-        const type = prompt('Tipo: Certamen, Presentación, Seminario u Otro', item.event_type);
-        if (type === null) return;
-        const details = prompt('Descripción opcional:', item.details);
-        if (details === null) return;
-        try {
-          await api(`/api/events/${item.id}`, { subject_id: item.subject_id, event_date: eventDate,
-            event_type: type, title, details }, 'PATCH');
-          selectedEventDate = eventDate;
-          eventMonth = new Date(`${eventDate}T12:00:00`);
-          eventMonth.setDate(1);
-          await refreshEvents();
-          message('Fecha actualizada.');
-        } catch (error) { message(error.message, true); }
+      edit.addEventListener('click', () => {
+        editingEventId = item.id;
+        $('event-subject').value = String(item.subject_id);
+        $('event-date').value = item.event_date;
+        $('event-type').value = item.event_type;
+        $('event-color').value = item.color;
+        $('event-title').value = item.title;
+        $('event-details').value = item.details;
+        $('event-save').textContent = 'Guardar cambios';
+        $('event-cancel').hidden = false;
+        $('event-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        $('event-title').focus();
       });
       const remove = element('button', 'danger-button', 'Eliminar');
       remove.type = 'button';
@@ -714,15 +723,32 @@ onSubmit('session-form', async () => {
   message('Clase agregada.');
 });
 onSubmit('event-form', async () => {
-  await api('/api/events', { subject_id: Number($('event-subject').value), event_date: $('event-date').value,
-    event_type: $('event-type').value, title: $('event-title').value, details: $('event-details').value });
+  const payload = { subject_id: Number($('event-subject').value), event_date: $('event-date').value,
+    event_type: $('event-type').value, color: $('event-color').value,
+    title: $('event-title').value, details: $('event-details').value };
+  if (editingEventId) await api(`/api/events/${editingEventId}`, payload, 'PATCH');
+  else await api('/api/events', payload);
   selectedEventDate = $('event-date').value;
   eventMonth = new Date(`${selectedEventDate}T12:00:00`);
   eventMonth.setDate(1);
+  const wasEditing = Boolean(editingEventId);
+  editingEventId = null;
   $('event-title').value = '';
   $('event-details').value = '';
+  $('event-color').value = '#7c3aed';
+  $('event-save').textContent = 'Agregar fecha';
+  $('event-cancel').hidden = true;
   await refreshEvents();
-  message('Fecha agregada al calendario.');
+  message(wasEditing ? 'Fecha actualizada.' : 'Fecha agregada al calendario.');
+});
+$('event-cancel').addEventListener('click', () => {
+  editingEventId = null;
+  $('event-title').value = '';
+  $('event-details').value = '';
+  $('event-color').value = '#7c3aed';
+  $('event-type').value = 'Prueba';
+  $('event-save').textContent = 'Agregar fecha';
+  $('event-cancel').hidden = true;
 });
 $('subject-filter').addEventListener('change', async event => {
   currentSubject = event.target.value === 'all' ? 'all' : Number(event.target.value);
