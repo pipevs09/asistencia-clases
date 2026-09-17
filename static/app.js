@@ -10,6 +10,11 @@ calendarMonth.setDate(1);
 let calendarStudent = null;
 let calendarClasses = [];
 let selectedCalendarDate = null;
+let eventMonth = new Date();
+eventMonth.setDate(1);
+let eventSubject = 'all';
+let calendarEvents = [];
+let selectedEventDate = null;
 let adminState = { configured: false, authenticated: false };
 let studentState = { authenticated: false, student_id: null, name: null };
 let studentActivation = null;
@@ -65,15 +70,22 @@ async function loadOverview() {
   fillSelect('report-subject-filter', overview.subjects, 'Todos los ramos', reportSubject, 'all');
   fillSelect('editor-filter', overview.subjects, 'Todos los ramos', editorFilter, 'all');
   fillSelect('add-subject', overview.subjects, 'Selecciona un ramo', addSubject);
+  if (eventSubject !== 'all' && !overview.subjects.some(s => s.id === Number(eventSubject))) eventSubject = 'all';
+  fillSelect('event-subject-filter', overview.subjects, 'Todos los ramos', eventSubject, 'all');
+  fillSelect('event-subject', overview.subjects, 'Selecciona un ramo', overview.subjects[0]?.id || '');
   await refreshSubject();
   await refreshReport();
   await refreshEditor();
   await refreshCalendar();
+  await refreshEvents();
 }
 
 async function loadAdminStatus() {
   adminState = await api('/api/admin/status');
   $('tab-setup').hidden = !adminState.authenticated;
+  $('event-form').hidden = !adminState.authenticated;
+  $('event-admin-hint').hidden = adminState.authenticated;
+  renderEventDetail();
   document.querySelector('.tabs').classList.toggle('with-admin', adminState.authenticated);
   $('admin-button').textContent = adminState.authenticated ? 'Cerrar sesión'
     : adminState.configured ? 'Ingresar como administrador'
@@ -569,6 +581,104 @@ function renderCalendarDetail() {
   detail.append(list);
 }
 
+function eventMonthKey() {
+  return `${eventMonth.getFullYear()}-${String(eventMonth.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function refreshEvents() {
+  const month = eventMonthKey();
+  const subject = eventSubject;
+  const events = await api(`/api/events?month=${month}&subject_id=${subject}`);
+  if (month !== eventMonthKey() || subject !== eventSubject) return;
+  calendarEvents = events;
+  $('event-month').textContent = eventMonth.toLocaleDateString('es-CL', { month: 'long', year: 'numeric' });
+  renderEventCalendar();
+}
+
+function renderEventCalendar() {
+  const grid = $('event-grid');
+  grid.replaceChildren();
+  const year = eventMonth.getFullYear();
+  const month = eventMonth.getMonth();
+  const days = new Date(year, month + 1, 0).getDate();
+  const offset = (new Date(year, month, 1).getDay() + 6) % 7;
+  for (let i = 0; i < offset; i++) grid.append(element('div', 'calendar-spacer'));
+  for (let day = 1; day <= days; day++) {
+    const iso = `${eventMonthKey()}-${String(day).padStart(2, '0')}`;
+    const entries = calendarEvents.filter(item => item.event_date === iso);
+    const button = element('button', `calendar-day${entries.length ? ' has-event' : ''}${selectedEventDate === iso ? ' selected' : ''}`);
+    button.type = 'button';
+    button.setAttribute('aria-label', `${readableDate(iso)}: ${entries.length} evento${entries.length === 1 ? '' : 's'}`);
+    button.append(element('span', 'day-number', day));
+    if (entries.length) button.append(element('span', 'day-count', `${entries.length} evento${entries.length === 1 ? '' : 's'}`));
+    button.addEventListener('click', () => {
+      selectedEventDate = iso;
+      if (adminState.authenticated) $('event-date').value = iso;
+      renderEventCalendar();
+    });
+    grid.append(button);
+  }
+  renderEventDetail();
+}
+
+function renderEventDetail() {
+  const detail = $('event-detail');
+  detail.replaceChildren();
+  if (!selectedEventDate || !selectedEventDate.startsWith(eventMonthKey())) {
+    detail.textContent = 'Selecciona un día para ver sus eventos.';
+    return;
+  }
+  const entries = calendarEvents.filter(item => item.event_date === selectedEventDate);
+  detail.append(element('strong', '', readableDate(selectedEventDate)));
+  if (!entries.length) { detail.append(element('p', '', 'No hay fechas calendarizadas este día.')); return; }
+  const list = element('div', 'event-list');
+  entries.forEach(item => {
+    const row = element('div', 'event-item');
+    const text = element('div');
+    text.append(element('strong', '', `${item.event_type} · ${item.subject_name}`),
+      element('p', '', item.title), item.details ? element('small', '', item.details) : document.createTextNode(''));
+    row.append(text);
+    if (adminState.authenticated) {
+      const actions = element('div', 'event-actions');
+      const edit = element('button', 'secondary-button', 'Editar');
+      edit.type = 'button';
+      edit.addEventListener('click', async () => {
+        const title = prompt('Título del evento:', item.title);
+        if (title === null) return;
+        const eventDate = prompt('Fecha (AAAA-MM-DD):', item.event_date);
+        if (eventDate === null) return;
+        const type = prompt('Tipo: Certamen, Presentación, Seminario u Otro', item.event_type);
+        if (type === null) return;
+        const details = prompt('Descripción opcional:', item.details);
+        if (details === null) return;
+        try {
+          await api(`/api/events/${item.id}`, { subject_id: item.subject_id, event_date: eventDate,
+            event_type: type, title, details }, 'PATCH');
+          selectedEventDate = eventDate;
+          eventMonth = new Date(`${eventDate}T12:00:00`);
+          eventMonth.setDate(1);
+          await refreshEvents();
+          message('Fecha actualizada.');
+        } catch (error) { message(error.message, true); }
+      });
+      const remove = element('button', 'danger-button', 'Eliminar');
+      remove.type = 'button';
+      remove.addEventListener('click', async () => {
+        if (!confirm(`¿Eliminar “${item.title}”?`)) return;
+        try {
+          await api(`/api/events/${item.id}`, undefined, 'DELETE');
+          await refreshEvents();
+          message('Fecha eliminada.');
+        } catch (error) { message(error.message, true); }
+      });
+      actions.append(edit, remove);
+      row.append(actions);
+    }
+    list.append(row);
+  });
+  detail.append(list);
+}
+
 function onSubmit(id, action) {
   $(id).addEventListener('submit', async event => {
     event.preventDefault();
@@ -603,6 +713,17 @@ onSubmit('session-form', async () => {
   await refreshCalendar();
   message('Clase agregada.');
 });
+onSubmit('event-form', async () => {
+  await api('/api/events', { subject_id: Number($('event-subject').value), event_date: $('event-date').value,
+    event_type: $('event-type').value, title: $('event-title').value, details: $('event-details').value });
+  selectedEventDate = $('event-date').value;
+  eventMonth = new Date(`${selectedEventDate}T12:00:00`);
+  eventMonth.setDate(1);
+  $('event-title').value = '';
+  $('event-details').value = '';
+  await refreshEvents();
+  message('Fecha agregada al calendario.');
+});
 $('subject-filter').addEventListener('change', async event => {
   currentSubject = event.target.value === 'all' ? 'all' : Number(event.target.value);
   reportSubject = currentSubject;
@@ -620,6 +741,10 @@ $('report-student-filter').addEventListener('change', async event => {
 $('editor-filter').addEventListener('change', async event => {
   editorFilter = event.target.value === 'all' ? 'all' : Number(event.target.value);
   try { await refreshEditor(); } catch (error) { message(error.message, true); }
+});
+$('event-subject-filter').addEventListener('change', async event => {
+  eventSubject = event.target.value === 'all' ? 'all' : Number(event.target.value);
+  try { await refreshEvents(); } catch (error) { message(error.message, true); }
 });
 $('add-subject').addEventListener('change', event => { addSubject = event.target.value ? Number(event.target.value) : null; });
 for (const type of ['students', 'subjects']) {
@@ -802,7 +927,15 @@ for (const [id, direction] of [['calendar-prev', -1], ['calendar-next', 1]]) {
     try { await refreshCalendar(); } catch (error) { message(error.message, true); }
   });
 }
+for (const [id, direction] of [['event-prev', -1], ['event-next', 1]]) {
+  $(id).addEventListener('click', async () => {
+    eventMonth.setMonth(eventMonth.getMonth() + direction);
+    selectedEventDate = null;
+    try { await refreshEvents(); } catch (error) { message(error.message, true); }
+  });
+}
 $('class-date').value = new Date().toLocaleDateString('en-CA');
+$('event-date').value = new Date().toLocaleDateString('en-CA');
 Promise.all([loadAdminStatus(), loadStudentStatus()])
   .then(loadOverview)
   .catch(error => message(error.message, true));

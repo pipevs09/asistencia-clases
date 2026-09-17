@@ -76,6 +76,14 @@ def init_db():
             status TEXT NOT NULL CHECK (status IN ('presente', 'ausente', 'justificado')),
             PRIMARY KEY (session_id, student_id)
         );
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id INTEGER PRIMARY KEY,
+            subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+            event_date TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT ''
+        );
         CREATE TABLE IF NOT EXISTS admin_account (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             salt BLOB NOT NULL,
@@ -572,6 +580,27 @@ class Handler(BaseHTTPRequestHandler):
                             WHERE s.class_date >= ? AND s.class_date < ?
                             ORDER BY s.class_date, sub.name, s.class_number
                         """, (student_id, student_id, month + "-01", month + "-32"))
+                    elif path == "/api/events":
+                        month = query.get("month", [None])[0]
+                        if not month or len(month) != 7 or month[4] != "-":
+                            raise ValueError("El mes debe tener el formato AAAA-MM.")
+                        try:
+                            date.fromisoformat(month + "-01")
+                        except ValueError:
+                            raise ValueError("Selecciona un mes válido.") from None
+                        subject_raw = query.get("subject_id", ["all"])[0]
+                        subject_id = None if subject_raw == "all" else positive_id({"subject_id": subject_raw}, "subject_id")
+                        if subject_id:
+                            exists(con, "subjects", subject_id)
+                        result = rows(con, """
+                            SELECT e.id, e.subject_id, sub.name AS subject_name,
+                                   e.event_date, e.event_type, e.title, e.details
+                            FROM calendar_events e
+                            JOIN subjects sub ON sub.id = e.subject_id
+                            WHERE e.event_date >= ? AND e.event_date < ?
+                              AND (? IS NULL OR e.subject_id = ?)
+                            ORDER BY e.event_date, sub.name, e.title
+                        """, (month + "-01", month + "-32", subject_id, subject_id))
                     else:
                         self.send_json({"error": "Ruta no encontrada."}, 404)
                         return
@@ -595,6 +624,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             if self.path in {"/api/students", "/api/subjects"} and not self.require_admin():
+                return
+            if self.path == "/api/events" and not self.require_admin():
                 return
             reset_parts = self.path.split("/")
             reset_request = (len(reset_parts) == 5 and reset_parts[:3] == ["", "api", "students"]
@@ -809,6 +840,26 @@ class Handler(BaseHTTPRequestHandler):
                                    ON CONFLICT(session_id, student_id) DO UPDATE SET status = excluded.status""",
                                 (session_id, student_id, status))
                     result = {"session_id": session_id, "student_id": student_id, "status": status}
+                elif self.path == "/api/events":
+                    subject_id = positive_id(data, "subject_id")
+                    exists(con, "subjects", subject_id)
+                    event_date = required_text(data, "event_date", 10)
+                    try:
+                        date.fromisoformat(event_date)
+                    except ValueError:
+                        raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
+                    event_type = required_text(data, "event_type", 30)
+                    if event_type not in {"Certamen", "Presentación", "Seminario", "Otro"}:
+                        raise ValueError("Selecciona un tipo de evento válido.")
+                    title = required_text(data, "title")
+                    details = data.get("details", "")
+                    if not isinstance(details, str) or len(details.strip()) > 300:
+                        raise ValueError("La descripción es demasiado larga.")
+                    cur = con.execute("""INSERT INTO calendar_events
+                        (subject_id, event_date, event_type, title, details) VALUES (?, ?, ?, ?, ?)""",
+                        (subject_id, event_date, event_type, title, details.strip()))
+                    result = {"id": cur.lastrowid, "subject_id": subject_id, "event_date": event_date,
+                              "event_type": event_type, "title": title, "details": details.strip()}
                 else:
                     self.send_json({"error": "Ruta no encontrada."}, 404)
                     return
@@ -827,19 +878,43 @@ class Handler(BaseHTTPRequestHandler):
     def change_item(self, method):
         try:
             parts = urlparse(self.path).path.split("/")
-            if len(parts) != 4 or parts[:2] != ["", "api"] or parts[2] not in {"students", "subjects", "sessions"}:
+            if len(parts) != 4 or parts[:2] != ["", "api"] or parts[2] not in {"students", "subjects", "sessions", "events"}:
                 self.send_json({"error": "Ruta no encontrada."}, 404)
                 return
             table = parts[2]
-            if table in {"students", "subjects"} and not self.require_admin():
+            if table in {"students", "subjects", "events"} and not self.require_admin():
                 return
             if table == "sessions" and not self.require_class_identity():
                 return
             item_id = positive_id({"id": parts[3]}, "id")
             data = self.read_json() if method == "PATCH" else None
             with connect() as con:
-                exists(con, table, item_id)
-                if table == "sessions":
+                exists(con, "calendar_events" if table == "events" else table, item_id)
+                if table == "events":
+                    if method == "PATCH":
+                        subject_id = positive_id(data, "subject_id")
+                        exists(con, "subjects", subject_id)
+                        event_date = required_text(data, "event_date", 10)
+                        try:
+                            date.fromisoformat(event_date)
+                        except ValueError:
+                            raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
+                        event_type = required_text(data, "event_type", 30)
+                        if event_type not in {"Certamen", "Presentación", "Seminario", "Otro"}:
+                            raise ValueError("Selecciona un tipo de evento válido.")
+                        title = required_text(data, "title")
+                        details = data.get("details", "")
+                        if not isinstance(details, str) or len(details.strip()) > 300:
+                            raise ValueError("La descripción es demasiado larga.")
+                        con.execute("""UPDATE calendar_events SET subject_id = ?, event_date = ?,
+                            event_type = ?, title = ?, details = ? WHERE id = ?""",
+                            (subject_id, event_date, event_type, title, details.strip(), item_id))
+                        result = {"id": item_id, "subject_id": subject_id, "event_date": event_date,
+                                  "event_type": event_type, "title": title, "details": details.strip()}
+                    else:
+                        con.execute("DELETE FROM calendar_events WHERE id = ?", (item_id,))
+                        result = {"deleted": item_id}
+                elif table == "sessions":
                     con.execute("BEGIN IMMEDIATE")
                     original = con.execute("""SELECT subject_id, class_date, class_number FROM sessions
                                               WHERE id = ?""", (item_id,)).fetchone()
