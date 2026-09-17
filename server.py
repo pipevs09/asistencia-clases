@@ -856,7 +856,7 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError:
                         raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
                     event_type = required_text(data, "event_type", 30)
-                    if event_type not in {"Prueba", "Presentación", "Otro"}:
+                    if event_type not in {"Prueba", "Presentación", "Clase", "Otro"}:
                         raise ValueError("Selecciona un tipo de evento válido.")
                     title = required_text(data, "title")
                     details = data.get("details", "")
@@ -911,7 +911,7 @@ class Handler(BaseHTTPRequestHandler):
                         except ValueError:
                             raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
                         event_type = required_text(data, "event_type", 30)
-                        if event_type not in {"Prueba", "Presentación", "Otro"}:
+                        if event_type not in {"Prueba", "Presentación", "Clase", "Otro"}:
                             raise ValueError("Selecciona un tipo de evento válido.")
                         title = required_text(data, "title")
                         details = data.get("details", "")

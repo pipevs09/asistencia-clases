@@ -610,7 +610,10 @@ function renderEventCalendar() {
     const button = element('button', `calendar-day${entries.length ? ' has-event' : ''}${selectedEventDate === iso ? ' selected' : ''}`);
     button.type = 'button';
     button.setAttribute('aria-label', `${readableDate(iso)}: ${entries.length} evento${entries.length === 1 ? '' : 's'}`);
-    button.append(element('span', 'day-number', day));
+    const dayHead = element('span', 'event-day-head');
+    dayHead.append(element('span', 'day-number', day));
+    if (entries.some(item => item.event_type === 'Prueba')) dayHead.append(element('span', 'test-label', 'Prueba'));
+    button.append(dayHead);
     if (entries.length) button.append(element('span', 'day-count', `${entries.length} evento${entries.length === 1 ? '' : 's'}`));
     if (entries.length) {
       const colors = element('span', 'event-colors');
