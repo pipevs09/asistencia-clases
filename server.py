@@ -505,9 +505,10 @@ class Handler(BaseHTTPRequestHandler):
                         subject_id = None if subject_raw == "all" else positive_id({"subject_id": subject_raw}, "subject_id")
                         if subject_id:
                             exists(con, "subjects", subject_id)
-                        viewer_student_id = None
-                        if not self.admin_status(con)["authenticated"]:
-                            viewer_student_id = self.student_status(con)["student_id"]
+                        # Si ambas sesiones quedaron abiertas en el navegador, la vista de clases
+                        # prioriza el estado personal del estudiante. Una sesión solo administrativa
+                        # sigue mostrando los totales generales.
+                        viewer_student_id = self.student_status(con)["student_id"]
                         result = rows(con, """
                             SELECT s.id, s.subject_id, sub.name AS subject_name,
                                    s.class_date, s.title, s.class_number,
