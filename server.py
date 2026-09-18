@@ -505,9 +505,16 @@ class Handler(BaseHTTPRequestHandler):
                         subject_id = None if subject_raw == "all" else positive_id({"subject_id": subject_raw}, "subject_id")
                         if subject_id:
                             exists(con, "subjects", subject_id)
+                        viewer_student_id = None
+                        if not self.admin_status(con)["authenticated"]:
+                            viewer_student_id = self.student_status(con)["student_id"]
                         result = rows(con, """
                             SELECT s.id, s.subject_id, sub.name AS subject_name,
                                    s.class_date, s.title, s.class_number,
+                                   CASE WHEN ? IS NULL THEN NULL ELSE COALESCE(
+                                       (SELECT own.status FROM attendance own
+                                        WHERE own.session_id = s.id AND own.student_id = ?), 'ausente')
+                                   END AS viewer_status,
                                    SUM(CASE WHEN a.status = 'presente' THEN 1 ELSE 0 END) AS present,
                                    SUM(CASE WHEN a.status = 'justificado' THEN 1 ELSE 0 END) AS justified,
                                    (SELECT COUNT(*) FROM students) -
@@ -516,7 +523,7 @@ class Handler(BaseHTTPRequestHandler):
                             LEFT JOIN attendance a ON a.session_id = s.id
                             WHERE (? IS NULL OR s.subject_id = ?) GROUP BY s.id
                             ORDER BY s.class_date DESC, s.id DESC
-                        """, (subject_id, subject_id))
+                        """, (viewer_student_id, viewer_student_id, subject_id, subject_id))
                     elif path == "/api/session":
                         session_id = positive_id({"session_id": query.get("session_id", [None])[0]}, "session_id")
                         session = con.execute("SELECT id, subject_id, class_date, title, class_number FROM sessions WHERE id = ?", (session_id,)).fetchone()

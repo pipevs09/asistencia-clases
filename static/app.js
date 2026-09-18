@@ -94,6 +94,7 @@ async function loadAdminStatus() {
       : adminState.public_mode ? 'Configurar administrador en servidor' : 'Configurar administrador';
   if (!adminState.authenticated && !$('panel-setup').hidden) $('tab-classes').click();
   if (!adminState.configured && !adminState.public_mode) openAdminDialog();
+  if (overview.students.length || overview.subjects.length) await refreshSubject();
 }
 
 async function loadStudentStatus() {
@@ -111,6 +112,7 @@ async function loadStudentStatus() {
     }
   }
   renderCalendarDetail();
+  if (overview.students.length || overview.subjects.length) await refreshSubject();
 }
 
 async function openStudentDialog(firstTime = false) {
@@ -443,8 +445,11 @@ function renderSessions(sessions) {
     detail.append(element('strong', '', `${readableDate(session.class_date)} · ${session.subject_name} · ${classLabel(session)}`),
       element('small', '', session.title || 'Clase sin tema indicado'));
     const meta = element('div', 'meta');
-    const count = element('span', session.absent ? 'pill warn' : 'pill',
-      `${session.present} presentes · ${session.absent} ausentes${session.justified ? ` · ${session.justified} justificadas` : ''}`);
+    const personalStatus = { presente: 'Presente', ausente: 'Ausente', justificado: 'Justificado' };
+    const count = session.viewer_status
+      ? element('span', `pill status-${session.viewer_status}`, personalStatus[session.viewer_status])
+      : element('span', session.absent ? 'pill warn' : 'pill',
+        `${session.present} presentes · ${session.absent} ausentes${session.justified ? ` · ${session.justified} justificadas` : ''}`);
     const button = element('button', '', 'Marcar asistencia');
     button.type = 'button';
     button.addEventListener('click', () => openAttendance(session.id));
