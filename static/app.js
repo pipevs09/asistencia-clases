@@ -87,6 +87,7 @@ async function loadAdminStatus() {
   $('event-form').hidden = !adminState.authenticated;
   $('event-admin-hint').hidden = adminState.authenticated;
   renderEventDetail();
+  renderCalendarDetail();
   document.querySelector('.tabs').classList.toggle('with-admin', adminState.authenticated);
   $('admin-button').textContent = adminState.authenticated ? 'Cerrar sesión'
     : adminState.configured ? 'Ingresar como administrador'
@@ -109,6 +110,7 @@ async function loadStudentStatus() {
       await refreshReport();
     }
   }
+  renderCalendarDetail();
 }
 
 async function openStudentDialog(firstTime = false) {
@@ -573,11 +575,17 @@ function renderCalendarDetail() {
   const entries = calendarClasses.filter(item => item.class_date === selectedCalendarDate);
   detail.append(element('strong', '', readableDate(selectedCalendarDate)));
   if (!entries.length) { detail.append(element('p', '', 'No hay clases registradas este día.')); return; }
-  const list = element('ul');
+  const list = element('div', 'calendar-class-list');
   entries.forEach(item => {
-    const line = element('li', item.status === 'ausente' ? 'red-text' : '',
+    const row = element('div', 'calendar-class-item');
+    const line = element('span', item.status === 'ausente' ? 'red-text' : '',
       `${item.subject_name} · ${classLabel(item)}${item.title ? ` · ${item.title}` : ''}${item.status === 'ausente' ? ' · Falta' : ''}`);
-    list.append(line);
+    const button = element('button', 'secondary-button', adminState.authenticated
+      ? 'Gestionar asistencia' : studentState.authenticated ? 'Marcar mi asistencia' : 'Marcar asistencia');
+    button.type = 'button';
+    button.addEventListener('click', () => openAttendance(item.id));
+    row.append(line, button);
+    list.append(row);
   });
   detail.append(list);
 }
