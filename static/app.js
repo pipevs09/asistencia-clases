@@ -639,12 +639,16 @@ function renderEventCalendar() {
     button.setAttribute('aria-label', `${readableDate(iso)}: ${entries.length} evento${entries.length === 1 ? '' : 's'}`);
     if (subjects.length) {
       const stripeSize = 100 / subjects.length;
-      const stops = subjects.flatMap((subject, index) => [
+      const borderStops = subjects.flatMap((subject, index) => [
         `${subject.color} ${index * stripeSize}%`,
         `${subject.color} ${(index + 1) * stripeSize}%`
       ]);
-      button.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
-      button.style.borderColor = subjects[0].color;
+      const fillStops = subjects.flatMap((subject, index) => [
+        `${subject.color}38 ${index * stripeSize}%`,
+        `${subject.color}38 ${(index + 1) * stripeSize}%`
+      ]);
+      button.style.background = `linear-gradient(90deg, ${fillStops.join(', ')}) padding-box, linear-gradient(90deg, ${borderStops.join(', ')}) border-box`;
+      button.style.borderColor = 'transparent';
     }
     const dayHead = element('span', 'event-day-head');
     dayHead.append(element('span', 'day-number', day));
