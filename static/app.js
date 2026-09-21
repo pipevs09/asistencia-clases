@@ -251,11 +251,15 @@ function renderSubjects() {
   overview.subjects.forEach(subject => {
     const row = element('div', 'student-row');
     const name = element('strong', '', subject.name);
+    const identity = element('div', 'subject-identity');
+    const marker = element('i', 'subject-color-dot');
+    marker.style.backgroundColor = subject.color;
+    identity.append(marker, name);
     const actions = element('div', 'student-actions');
     const edit = element('button', 'secondary-button', 'Editar');
     edit.type = 'button';
     edit.addEventListener('click', () => {
-      name.remove();
+      identity.remove();
       edit.remove();
       const form = element('form', 'student-edit');
       const input = element('input');
@@ -263,6 +267,12 @@ function renderSubjects() {
       input.required = true;
       input.maxLength = 120;
       input.setAttribute('aria-label', 'Nombre del ramo');
+      const color = element('input');
+      color.type = 'color';
+      color.value = subject.color;
+      color.required = true;
+      color.className = 'subject-color-input';
+      color.setAttribute('aria-label', 'Color del ramo');
       const save = element('button', '', 'Guardar');
       save.type = 'submit';
       const cancel = element('button', 'secondary-button', 'Cancelar');
@@ -272,12 +282,12 @@ function renderSubjects() {
         event.preventDefault();
         save.disabled = true;
         try {
-          await api(`/api/subjects/${subject.id}`, { name: input.value }, 'PATCH');
+          await api(`/api/subjects/${subject.id}`, { name: input.value, color: color.value }, 'PATCH');
           await loadOverview();
-          message('Nombre del ramo actualizado.');
+          message('Ramo actualizado.');
         } catch (error) { message(error.message, true); save.disabled = false; }
       });
-      form.append(input, save, cancel);
+      form.append(input, color, save, cancel);
       row.prepend(form);
       input.focus();
     });
@@ -292,7 +302,7 @@ function renderSubjects() {
       } catch (error) { message(error.message, true); }
     });
     actions.append(edit, remove);
-    row.append(name, actions);
+    row.append(identity, actions);
     list.append(row);
   });
 }
@@ -678,7 +688,6 @@ function renderEventDetail() {
         $('event-subject').value = String(item.subject_id);
         $('event-date').value = item.event_date;
         $('event-type').value = item.event_type;
-        $('event-color').value = item.color;
         $('event-title').value = item.title;
         $('event-details').value = item.details;
         $('event-save').textContent = 'Guardar cambios';
@@ -722,7 +731,7 @@ onSubmit('student-form', async () => {
   message('Estudiante agregado. Entrega su código de activación.');
 });
 onSubmit('subject-form', async () => {
-  const subject = await api('/api/subjects', { name: $('subject-name').value });
+  const subject = await api('/api/subjects', { name: $('subject-name').value, color: $('subject-color').value });
   $('subject-name').value = '';
   addSubject = subject.id;
   await loadOverview();
@@ -740,7 +749,7 @@ onSubmit('session-form', async () => {
 });
 onSubmit('event-form', async () => {
   const payload = { subject_id: Number($('event-subject').value), event_date: $('event-date').value,
-    event_type: $('event-type').value, color: $('event-color').value,
+    event_type: $('event-type').value,
     title: $('event-title').value, details: $('event-details').value };
   if (editingEventId) await api(`/api/events/${editingEventId}`, payload, 'PATCH');
   else await api('/api/events', payload);
@@ -751,7 +760,6 @@ onSubmit('event-form', async () => {
   editingEventId = null;
   $('event-title').value = '';
   $('event-details').value = '';
-  $('event-color').value = '#7c3aed';
   $('event-save').textContent = 'Agregar fecha';
   $('event-cancel').hidden = true;
   await refreshEvents();
@@ -761,7 +769,6 @@ $('event-cancel').addEventListener('click', () => {
   editingEventId = null;
   $('event-title').value = '';
   $('event-details').value = '';
-  $('event-color').value = '#7c3aed';
   $('event-type').value = 'Prueba';
   $('event-save').textContent = 'Agregar fecha';
   $('event-cancel').hidden = true;

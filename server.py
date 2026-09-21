@@ -60,7 +60,8 @@ def init_db():
             id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE
         );
         CREATE TABLE IF NOT EXISTS subjects (
-            id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+            color TEXT NOT NULL DEFAULT '#1767cc'
         );
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY,
@@ -136,6 +137,9 @@ def init_db():
             con.execute("ALTER TABLE calendar_events ADD COLUMN color TEXT NOT NULL DEFAULT '#7c3aed'")
         con.execute("UPDATE calendar_events SET event_type = 'Prueba' WHERE event_type = 'Certamen'")
         con.execute("UPDATE calendar_events SET event_type = 'Otro' WHERE event_type = 'Seminario'")
+        subject_columns = {row[1] for row in con.execute("PRAGMA table_info(subjects)")}
+        if "color" not in subject_columns:
+            con.execute("ALTER TABLE subjects ADD COLUMN color TEXT NOT NULL DEFAULT '#1767cc'")
         con.commit()
         columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
         if "class_number" not in columns:
@@ -183,6 +187,14 @@ def required_text(data, key, max_len=120):
     if len(value) > max_len:
         raise ValueError(f"El campo '{key}' es demasiado largo.")
     return value
+
+
+def required_color(data, key="color"):
+    color = data.get(key)
+    if not isinstance(color, str) or len(color) != 7 or color[0] != "#" or any(
+            char not in "0123456789abcdefABCDEF" for char in color[1:]):
+        raise ValueError("Selecciona un color válido.")
+    return color.lower()
 
 
 def positive_id(data, key):
@@ -490,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
                     if path == "/api/overview":
                         result = {
                             "students": rows(con, "SELECT id, name FROM students ORDER BY name"),
-                            "subjects": rows(con, "SELECT id, name FROM subjects ORDER BY name"),
+                            "subjects": rows(con, "SELECT id, name, color FROM subjects ORDER BY name"),
                         }
                     elif path == "/api/admin/status":
                         result = self.admin_status(con)
@@ -609,7 +621,7 @@ class Handler(BaseHTTPRequestHandler):
                             exists(con, "subjects", subject_id)
                         result = rows(con, """
                             SELECT e.id, e.subject_id, sub.name AS subject_name,
-                                   e.event_date, e.event_type, e.title, e.details, e.color
+                                   e.event_date, e.event_type, e.title, e.details, sub.color
                             FROM calendar_events e
                             JOIN subjects sub ON sub.id = e.subject_id
                             WHERE e.event_date >= ? AND e.event_date < ?
@@ -823,8 +835,9 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"id": cur.lastrowid, "name": name, "activation_code": code}
                 elif self.path == "/api/subjects":
                     name = required_text(data, "name")
-                    cur = con.execute("INSERT INTO subjects (name) VALUES (?)", (name,))
-                    result = {"id": cur.lastrowid, "name": name}
+                    color = required_color(data)
+                    cur = con.execute("INSERT INTO subjects (name, color) VALUES (?, ?)", (name, color))
+                    result = {"id": cur.lastrowid, "name": name, "color": color}
                 elif self.path == "/api/sessions":
                     subject_id = positive_id(data, "subject_id")
                     exists(con, "subjects", subject_id)
@@ -871,15 +884,11 @@ class Handler(BaseHTTPRequestHandler):
                     details = data.get("details", "")
                     if not isinstance(details, str) or len(details.strip()) > 300:
                         raise ValueError("La descripción es demasiado larga.")
-                    color = data.get("color")
-                    if not isinstance(color, str) or len(color) != 7 or color[0] != "#" or any(
-                            char not in "0123456789abcdefABCDEF" for char in color[1:]):
-                        raise ValueError("Selecciona un color válido.")
                     cur = con.execute("""INSERT INTO calendar_events
-                        (subject_id, event_date, event_type, title, details, color) VALUES (?, ?, ?, ?, ?, ?)""",
-                        (subject_id, event_date, event_type, title, details.strip(), color.lower()))
+                        (subject_id, event_date, event_type, title, details) VALUES (?, ?, ?, ?, ?)""",
+                        (subject_id, event_date, event_type, title, details.strip()))
                     result = {"id": cur.lastrowid, "subject_id": subject_id, "event_date": event_date,
-                              "event_type": event_type, "title": title, "details": details.strip(), "color": color.lower()}
+                              "event_type": event_type, "title": title, "details": details.strip()}
                 else:
                     self.send_json({"error": "Ruta no encontrada."}, 404)
                     return
@@ -926,15 +935,11 @@ class Handler(BaseHTTPRequestHandler):
                         details = data.get("details", "")
                         if not isinstance(details, str) or len(details.strip()) > 300:
                             raise ValueError("La descripción es demasiado larga.")
-                        color = data.get("color")
-                        if not isinstance(color, str) or len(color) != 7 or color[0] != "#" or any(
-                                char not in "0123456789abcdefABCDEF" for char in color[1:]):
-                            raise ValueError("Selecciona un color válido.")
                         con.execute("""UPDATE calendar_events SET subject_id = ?, event_date = ?,
-                            event_type = ?, title = ?, details = ?, color = ? WHERE id = ?""",
-                            (subject_id, event_date, event_type, title, details.strip(), color.lower(), item_id))
+                            event_type = ?, title = ?, details = ? WHERE id = ?""",
+                            (subject_id, event_date, event_type, title, details.strip(), item_id))
                         result = {"id": item_id, "subject_id": subject_id, "event_date": event_date,
-                                  "event_type": event_type, "title": title, "details": details.strip(), "color": color.lower()}
+                                  "event_type": event_type, "title": title, "details": details.strip()}
                     else:
                         con.execute("DELETE FROM calendar_events WHERE id = ?", (item_id,))
                         result = {"deleted": item_id}
@@ -968,6 +973,11 @@ class Handler(BaseHTTPRequestHandler):
                         result = {"deleted": item_id}
                     if method == "DELETE" or moved:
                         renumber_group(con, original["subject_id"], original["class_date"])
+                elif method == "PATCH" and table == "subjects":
+                    name = required_text(data, "name")
+                    color = required_color(data)
+                    con.execute("UPDATE subjects SET name = ?, color = ? WHERE id = ?", (name, color, item_id))
+                    result = {"id": item_id, "name": name, "color": color}
                 elif method == "PATCH":
                     name = required_text(data, "name")
                     con.execute(f"UPDATE {table} SET name = ? WHERE id = ?", (name, item_id))
