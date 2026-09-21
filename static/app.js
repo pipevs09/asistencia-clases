@@ -630,22 +630,30 @@ function renderEventCalendar() {
   for (let day = 1; day <= days; day++) {
     const iso = `${eventMonthKey()}-${String(day).padStart(2, '0')}`;
     const entries = calendarEvents.filter(item => item.event_date === iso);
+    const subjects = [...new Map(entries.map(item => [item.subject_id, {
+      name: item.subject_name,
+      color: item.color
+    }])).values()];
     const button = element('button', `calendar-day${entries.length ? ' has-event' : ''}${selectedEventDate === iso ? ' selected' : ''}`);
     button.type = 'button';
     button.setAttribute('aria-label', `${readableDate(iso)}: ${entries.length} evento${entries.length === 1 ? '' : 's'}`);
+    if (subjects.length) {
+      const stripeSize = 100 / subjects.length;
+      const stops = subjects.flatMap((subject, index) => [
+        `${subject.color} ${index * stripeSize}%`,
+        `${subject.color} ${(index + 1) * stripeSize}%`
+      ]);
+      button.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
+      button.style.borderColor = subjects[0].color;
+    }
     const dayHead = element('span', 'event-day-head');
     dayHead.append(element('span', 'day-number', day));
     if (entries.some(item => item.event_type === 'Prueba')) dayHead.append(element('span', 'test-label', 'Prueba'));
     button.append(dayHead);
-    if (entries.length) button.append(element('span', 'day-count', `${entries.length} evento${entries.length === 1 ? '' : 's'}`));
-    if (entries.length) {
-      const colors = element('span', 'event-colors');
-      entries.slice(0, 4).forEach(item => {
-        const dot = element('i', 'event-color-dot');
-        dot.style.backgroundColor = item.color;
-        colors.append(dot);
-      });
-      button.append(colors);
+    if (subjects.length) {
+      const names = element('span', 'event-subject-names');
+      subjects.forEach(subject => names.append(element('span', 'event-subject-name', subject.name)));
+      button.append(names);
     }
     button.addEventListener('click', () => {
       selectedEventDate = iso;
