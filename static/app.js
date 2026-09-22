@@ -474,19 +474,46 @@ function renderReport(report) {
   list.replaceChildren();
   $('report-empty').hidden = report.length > 0;
   if (!report.length) $('report-empty').textContent = 'Agrega estudiantes para ver sus inasistencias.';
+
+  function appendStats(container, data) {
+    const stats = element('div', 'stats');
+    [[`Clases: ${data.total_classes}`, 'stat'], [`Presentes: ${data.present}`, 'stat'],
+      [`Ausentes: ${data.absent}`, 'stat absent'], [`Justificadas: ${data.justified}`, 'stat']]
+      .forEach(([text, cls]) => stats.append(element('span', cls, text)));
+    container.append(stats);
+    container.append(element('div', 'attendance-percent',
+      `Asistencia: ${data.attendance_percent === null ? '—' : `${data.attendance_percent.toLocaleString('es-CL')}%`}`));
+  }
+
   report.forEach(student => {
     const card = element('div', 'report-card');
+    if (student.subjects) {
+      card.classList.add('report-card-by-subject');
+      card.append(element('strong', 'report-student-name', student.name));
+      if (!student.subjects.length) card.append(element('p', 'hint', 'Aún no hay ramos registrados.'));
+      student.subjects.forEach(subject => {
+        const section = element('section', 'subject-report');
+        const heading = element('div', 'report-top');
+        heading.append(element('strong', '', subject.name),
+          element('span', subject.absent ? 'pill warn' : 'pill', `${subject.absent} inasistencia${subject.absent === 1 ? '' : 's'}`));
+        section.append(heading);
+        appendStats(section, subject);
+        if (subject.absence_days.length) {
+          const days = element('ul', 'absence-days');
+          subject.absence_days.forEach(day => days.append(element('li', '',
+            `${readableDate(day.class_date)} · ${classLabel(day)}${day.title ? ` · ${day.title}` : ''}`)));
+          section.append(days);
+        }
+        card.append(section);
+      });
+      list.append(card);
+      return;
+    }
     const top = element('div', 'report-top');
     top.append(element('strong', '', student.name),
       element('span', student.absent ? 'pill warn' : 'pill', `${student.absent} inasistencia${student.absent === 1 ? '' : 's'}`));
     card.append(top);
-    const stats = element('div', 'stats');
-    [[`Clases: ${student.total_classes}`, 'stat'], [`Presentes: ${student.present}`, 'stat'],
-      [`Ausentes: ${student.absent}`, 'stat absent'], [`Justificadas: ${student.justified}`, 'stat']]
-      .forEach(([text, cls]) => stats.append(element('span', cls, text)));
-    card.append(stats);
-    card.append(element('div', 'attendance-percent',
-      `Asistencia: ${student.attendance_percent === null ? '—' : `${student.attendance_percent.toLocaleString('es-CL')}%`}`));
+    appendStats(card, student);
     if (student.absence_days.length) {
       const days = element('ul', 'absence-days');
       student.absence_days.forEach(day => days.append(element('li', '',

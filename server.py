@@ -586,6 +586,31 @@ class Handler(BaseHTTPRequestHandler):
                                   AND (a.status IS NULL OR a.status = 'ausente')
                                 ORDER BY s.class_date DESC, s.id DESC
                             """, (item["id"], subject_id, subject_id))
+                            if subject_id is None and student_id is not None:
+                                item["subjects"] = rows(con, """
+                                    SELECT sub.id, sub.name,
+                                           COUNT(s.id) AS total_classes,
+                                           SUM(CASE WHEN a.status = 'presente' THEN 1 ELSE 0 END) AS present,
+                                           SUM(CASE WHEN s.id IS NOT NULL AND (a.status IS NULL OR a.status = 'ausente') THEN 1 ELSE 0 END) AS absent,
+                                           SUM(CASE WHEN a.status = 'justificado' THEN 1 ELSE 0 END) AS justified
+                                    FROM subjects sub
+                                    LEFT JOIN sessions s ON s.subject_id = sub.id
+                                    LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = ?
+                                    GROUP BY sub.id ORDER BY sub.name
+                                """, (item["id"],))
+                                for subject in item["subjects"]:
+                                    subject["attendance_percent"] = (
+                                        round(100 * subject["present"] / subject["total_classes"], 1)
+                                        if subject["total_classes"] else None
+                                    )
+                                    subject["absence_days"] = rows(con, """
+                                        SELECT s.class_date, s.title, s.class_number
+                                        FROM sessions s
+                                        LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = ?
+                                        WHERE s.subject_id = ?
+                                          AND (a.status IS NULL OR a.status = 'ausente')
+                                        ORDER BY s.class_date DESC, s.id DESC
+                                    """, (item["id"], subject["id"]))
                     elif path == "/api/calendar":
                         month = query.get("month", [None])[0]
                         if not month or len(month) != 7 or month[4] != "-":
