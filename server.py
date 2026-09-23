@@ -81,6 +81,7 @@ def init_db():
             id INTEGER PRIMARY KEY,
             subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
             event_date TEXT NOT NULL,
+            event_time TEXT NOT NULL DEFAULT '',
             event_type TEXT NOT NULL,
             title TEXT NOT NULL,
             details TEXT NOT NULL DEFAULT '',
@@ -135,6 +136,8 @@ def init_db():
         event_columns = {row[1] for row in con.execute("PRAGMA table_info(calendar_events)")}
         if "color" not in event_columns:
             con.execute("ALTER TABLE calendar_events ADD COLUMN color TEXT NOT NULL DEFAULT '#7c3aed'")
+        if "event_time" not in event_columns:
+            con.execute("ALTER TABLE calendar_events ADD COLUMN event_time TEXT NOT NULL DEFAULT ''")
         con.execute("UPDATE calendar_events SET event_type = 'Prueba' WHERE event_type = 'Certamen'")
         con.execute("UPDATE calendar_events SET event_type = 'Otro' WHERE event_type = 'Seminario'")
         subject_columns = {row[1] for row in con.execute("PRAGMA table_info(subjects)")}
@@ -195,6 +198,18 @@ def required_color(data, key="color"):
             char not in "0123456789abcdefABCDEF" for char in color[1:]):
         raise ValueError("Selecciona un color válido.")
     return color.lower()
+
+
+def optional_time(data, key="event_time"):
+    value = data.get(key, "")
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str) or len(value) != 5 or value[2] != ":":
+        raise ValueError("La hora debe tener el formato HH:MM.")
+    hour, minute = value[:2], value[3:]
+    if not hour.isdigit() or not minute.isdigit() or not 0 <= int(hour) <= 23 or not 0 <= int(minute) <= 59:
+        raise ValueError("Selecciona una hora válida.")
+    return value
 
 
 def positive_id(data, key):
@@ -646,12 +661,14 @@ class Handler(BaseHTTPRequestHandler):
                             exists(con, "subjects", subject_id)
                         result = rows(con, """
                             SELECT e.id, e.subject_id, sub.name AS subject_name,
-                                   e.event_date, e.event_type, e.title, e.details, sub.color
+                                   e.event_date, e.event_time, e.event_type, e.title, e.details, sub.color
                             FROM calendar_events e
                             JOIN subjects sub ON sub.id = e.subject_id
                             WHERE e.event_date >= ? AND e.event_date < ?
                               AND (? IS NULL OR e.subject_id = ?)
-                            ORDER BY e.event_date, sub.name, e.title
+                            ORDER BY e.event_date,
+                                     CASE WHEN e.event_time = '' THEN 1 ELSE 0 END,
+                                     e.event_time, sub.name, e.title
                         """, (month + "-01", month + "-32", subject_id, subject_id))
                     else:
                         self.send_json({"error": "Ruta no encontrada."}, 404)
@@ -905,6 +922,7 @@ class Handler(BaseHTTPRequestHandler):
                         date.fromisoformat(event_date)
                     except ValueError:
                         raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
+                    event_time = optional_time(data)
                     event_type = required_text(data, "event_type", 30)
                     if event_type not in {"Prueba", "Presentación", "Clase", "Otro"}:
                         raise ValueError("Selecciona un tipo de evento válido.")
@@ -913,10 +931,11 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(details, str) or len(details.strip()) > 300:
                         raise ValueError("La descripción es demasiado larga.")
                     cur = con.execute("""INSERT INTO calendar_events
-                        (subject_id, event_date, event_type, title, details) VALUES (?, ?, ?, ?, ?)""",
-                        (subject_id, event_date, event_type, title, details.strip()))
+                        (subject_id, event_date, event_time, event_type, title, details) VALUES (?, ?, ?, ?, ?, ?)""",
+                        (subject_id, event_date, event_time, event_type, title, details.strip()))
                     result = {"id": cur.lastrowid, "subject_id": subject_id, "event_date": event_date,
-                              "event_type": event_type, "title": title, "details": details.strip()}
+                              "event_time": event_time, "event_type": event_type, "title": title,
+                              "details": details.strip()}
                 else:
                     self.send_json({"error": "Ruta no encontrada."}, 404)
                     return
@@ -956,6 +975,7 @@ class Handler(BaseHTTPRequestHandler):
                             date.fromisoformat(event_date)
                         except ValueError:
                             raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
+                        event_time = optional_time(data)
                         event_type = required_text(data, "event_type", 30)
                         if event_type not in {"Prueba", "Presentación", "Clase", "Otro"}:
                             raise ValueError("Selecciona un tipo de evento válido.")
@@ -963,11 +983,12 @@ class Handler(BaseHTTPRequestHandler):
                         details = data.get("details", "")
                         if not isinstance(details, str) or len(details.strip()) > 300:
                             raise ValueError("La descripción es demasiado larga.")
-                        con.execute("""UPDATE calendar_events SET subject_id = ?, event_date = ?,
+                        con.execute("""UPDATE calendar_events SET subject_id = ?, event_date = ?, event_time = ?,
                             event_type = ?, title = ?, details = ? WHERE id = ?""",
-                            (subject_id, event_date, event_type, title, details.strip(), item_id))
+                            (subject_id, event_date, event_time, event_type, title, details.strip(), item_id))
                         result = {"id": item_id, "subject_id": subject_id, "event_date": event_date,
-                                  "event_type": event_type, "title": title, "details": details.strip()}
+                                  "event_time": event_time, "event_type": event_type, "title": title,
+                                  "details": details.strip()}
                     else:
                         con.execute("DELETE FROM calendar_events WHERE id = ?", (item_id,))
                         result = {"deleted": item_id}

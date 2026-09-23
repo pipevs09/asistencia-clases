@@ -721,7 +721,7 @@ function renderEventDetail() {
     const heading = element('strong', 'event-heading');
     const color = element('i', 'event-color-dot');
     color.style.backgroundColor = item.color;
-    heading.append(color, document.createTextNode(`${item.event_type} · ${item.subject_name}`));
+    heading.append(color, document.createTextNode(`${item.event_time ? `${item.event_time} · ` : ''}${item.event_type} · ${item.subject_name}`));
     text.append(heading,
       element('p', '', item.title), item.details ? element('small', '', item.details) : document.createTextNode(''));
     row.append(text);
@@ -733,6 +733,7 @@ function renderEventDetail() {
         editingEventId = item.id;
         $('event-subject').value = String(item.subject_id);
         $('event-date').value = item.event_date;
+        $('event-time').value = item.event_time || '';
         $('event-type').value = item.event_type;
         $('event-title').value = item.title;
         $('event-details').value = item.details;
@@ -795,7 +796,7 @@ onSubmit('session-form', async () => {
 });
 onSubmit('event-form', async () => {
   const payload = { subject_id: Number($('event-subject').value), event_date: $('event-date').value,
-    event_type: $('event-type').value,
+    event_time: $('event-time').value, event_type: $('event-type').value,
     title: $('event-title').value, details: $('event-details').value };
   if (editingEventId) await api(`/api/events/${editingEventId}`, payload, 'PATCH');
   else await api('/api/events', payload);
@@ -804,6 +805,7 @@ onSubmit('event-form', async () => {
   eventMonth.setDate(1);
   const wasEditing = Boolean(editingEventId);
   editingEventId = null;
+  $('event-time').value = '';
   $('event-title').value = '';
   $('event-details').value = '';
   $('event-save').textContent = 'Agregar fecha';
@@ -813,6 +815,7 @@ onSubmit('event-form', async () => {
 });
 $('event-cancel').addEventListener('click', () => {
   editingEventId = null;
+  $('event-time').value = '';
   $('event-title').value = '';
   $('event-details').value = '';
   $('event-type').value = 'Prueba';
