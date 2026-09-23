@@ -21,10 +21,17 @@ let studentState = { authenticated: false, student_id: null, name: null };
 let studentActivation = null;
 
 async function api(path, body, method = 'POST') {
-  const response = await fetch(path, body === undefined && method === 'POST' ? undefined : {
-    method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body)
-  });
+  let response;
+  try {
+    response = await fetch(path, body === undefined && method === 'POST' ? undefined : {
+      method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+  } catch {
+    throw new Error(navigator.onLine
+      ? 'No se pudo conectar con el servidor. Intenta nuevamente.'
+      : 'No hay conexión a internet. Los cambios requieren conexión con el servidor.');
+  }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación.');
   return data;
@@ -1024,6 +1031,32 @@ for (const [id, direction] of [['event-prev', -1], ['event-next', 1]]) {
 }
 $('class-date').value = new Date().toLocaleDateString('en-CA');
 $('event-date').value = new Date().toLocaleDateString('en-CA');
+
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  installPrompt = event;
+  $('install-app').hidden = false;
+});
+$('install-app').addEventListener('click', async () => {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  await installPrompt.userChoice;
+  installPrompt = null;
+  $('install-app').hidden = true;
+});
+window.addEventListener('appinstalled', () => {
+  installPrompt = null;
+  $('install-app').hidden = true;
+  message('Aplicación instalada correctamente.');
+});
+window.addEventListener('offline', () => message('Sin conexión: puedes ver la interfaz, pero no consultar ni guardar datos.', true));
+window.addEventListener('online', () => message('Conexión recuperada. Actualizando información...'));
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js')
+    .catch(() => console.warn('No se pudo activar el modo instalable.')));
+}
+
 Promise.all([loadAdminStatus(), loadStudentStatus()])
   .then(loadOverview)
   .catch(error => message(error.message, true));

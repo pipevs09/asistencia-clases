@@ -661,12 +661,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, 400)
             return
         name = path.lstrip("/")
-        if name not in {"index.html", "style.css", "app.js", "favicon.svg"}:
+        if name not in {"index.html", "style.css", "app.js", "favicon.svg", "manifest.webmanifest",
+                        "service-worker.js", "icon-192.png", "icon-512.png"}:
             self.send_error(404)
             return
         file = STATIC / name
         mime = {"index.html": "text/html", "style.css": "text/css", "app.js": "text/javascript",
-                "favicon.svg": "image/svg+xml"}[name]
+                "favicon.svg": "image/svg+xml", "manifest.webmanifest": "application/manifest+json",
+                "service-worker.js": "text/javascript", "icon-192.png": "image/png",
+                "icon-512.png": "image/png"}[name]
         raw = file.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", f"{mime}; charset=utf-8")
