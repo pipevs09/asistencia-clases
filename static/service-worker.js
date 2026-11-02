@@ -1,9 +1,9 @@
-const CACHE_NAME = 'asistencia-shell-v2';
+const CACHE_NAME = 'asistencia-shell-v101';
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css',
-  '/app.js',
+  '/style.css?v=101',
+  '/app.js?v=101',
   '/favicon.svg',
   '/manifest.webmanifest',
   '/icon-192.png',
@@ -29,7 +29,7 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
 
   event.respondWith(
-    fetch(request)
+    fetch(request, { cache: 'no-store' })
       .then(response => {
         if (response.ok) {
           const copy = response.clone();
@@ -44,4 +44,28 @@ self.addEventListener('fetch', event => {
         return Response.error();
       })
   );
+});
+
+self.addEventListener('push', event => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
+  event.waitUntil(self.registration.showNotification(data.title || 'Registro de Asistencia', {
+    body: data.body || 'Tienes una actividad próxima.',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: data.tag || 'asistencia-recordatorio',
+    data: { url: data.url || '/' }
+  }));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async clients => {
+    for (const client of clients) {
+      if ('navigate' in client) await client.navigate(target);
+      return client.focus();
+    }
+    return self.clients.openWindow(target);
+  }));
 });

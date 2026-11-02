@@ -31,6 +31,9 @@ from pythonanywhere_wsgi import application
 
 6. Guarda el archivo.
 
+Las notificaciones requieren tres líneas adicionales. Se agregan más adelante,
+después de generar sus claves; no escribas esas claves dentro del repositorio.
+
 ## 3. Configurar el administrador
 
 En una consola Bash ejecuta:
@@ -65,3 +68,59 @@ python3 pythonanywhere_manage.py --status-db
 ```
 
 La base se guarda en `~/asistencia_clases/data/asistencia.db`, dentro del almacenamiento persistente de la cuenta.
+
+## Activar las notificaciones del teléfono
+
+Los avisos se envían 15 minutos antes de una clase, 30 minutos antes de una
+presentación y 60 minutos antes de una prueba. Solo se pueden programar eventos
+que tengan una hora asignada.
+
+### 1. Generar las claves
+
+Antes de subir la actualización, abre PowerShell dentro de la carpeta local del
+proyecto y ejecuta:
+
+```powershell
+node scripts/generate_notification_keys.mjs
+```
+
+Guarda los tres valores que aparecen. Son secretos de la aplicación y no deben
+publicarse ni subirse a GitHub.
+
+### 2. Configurar PythonAnywhere
+
+En **Web**, abre el archivo WSGI y agrega estas líneas antes de importar
+`pythonanywhere_wsgi`, reemplazando los valores de ejemplo:
+
+```python
+import os
+
+os.environ["ASISTENCIA_VAPID_PUBLIC_KEY"] = "VALOR_GENERADO"
+os.environ["ASISTENCIA_NOTIFICATION_SECRET"] = "VALOR_GENERADO"
+```
+
+Pulsa **Reload** para aplicar el cambio.
+
+### 3. Configurar GitHub
+
+En el repositorio abre **Settings > Secrets and variables > Actions**, pulsa
+**New repository secret** y crea:
+
+- `APP_URL`: la dirección completa de la página, por ejemplo
+  `https://TU_USUARIO.pythonanywhere.com`.
+- `NOTIFICATION_SECRET`: el mismo valor de
+  `ASISTENCIA_NOTIFICATION_SECRET` configurado en PythonAnywhere.
+- `VAPID_PUBLIC_KEY`: el valor de `ASISTENCIA_VAPID_PUBLIC_KEY`.
+- `VAPID_PRIVATE_KEY`: la clave privada generada.
+- `VAPID_SUBJECT`: un correo de contacto con el formato
+  `mailto:correo@ejemplo.com`.
+
+Después abre **Actions > Enviar recordatorios** y ejecuta **Run workflow** una
+vez para comprobarlo. Luego GitHub revisará automáticamente los avisos
+pendientes cada cinco minutos.
+
+### 4. Activarlas en cada teléfono
+
+Cada estudiante debe iniciar sesión, abrir **Personalización** desde su perfil y
+pulsar **Activar notificaciones**. En iPhone la página debe estar instalada en
+la pantalla de inicio y abrirse desde su icono para poder conceder el permiso.

@@ -1,0 +1,30 @@
+name: Enviar recordatorios
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: attendance-notifications
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Instalar componente Web Push
+        run: npm install --no-save web-push@3.6.7
+      - name: Enviar notificaciones pendientes
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          NOTIFICATION_SECRET: ${{ secrets.NOTIFICATION_SECRET }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+        run: node scripts/send_notifications.mjs
