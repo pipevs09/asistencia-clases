@@ -200,6 +200,29 @@ def init_db():
             sent_at INTEGER NOT NULL,
             PRIMARY KEY (event_id, subscription_id, reminder_minutes)
         );
+        CREATE TABLE IF NOT EXISTS native_push_tokens (
+            id INTEGER PRIMARY KEY,
+            student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            platform TEXT NOT NULL DEFAULT 'android' CHECK (platform IN ('android')),
+            token TEXT NOT NULL UNIQUE,
+            created_at INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS native_notification_deliveries (
+            event_id INTEGER NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
+            token_id INTEGER NOT NULL REFERENCES native_push_tokens(id) ON DELETE CASCADE,
+            reminder_minutes INTEGER NOT NULL,
+            sent_at INTEGER NOT NULL,
+            PRIMARY KEY (event_id, token_id, reminder_minutes)
+        );
+        CREATE TABLE IF NOT EXISTS notification_preferences (
+            student_id INTEGER PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
+            class_minutes INTEGER NOT NULL DEFAULT 15 CHECK (class_minutes BETWEEN 0 AND 1440),
+            presentation_minutes INTEGER NOT NULL DEFAULT 30 CHECK (presentation_minutes BETWEEN 0 AND 1440),
+            test_minutes INTEGER NOT NULL DEFAULT 60 CHECK (test_minutes BETWEEN 0 AND 1440),
+            other_minutes INTEGER NOT NULL DEFAULT 15 CHECK (other_minutes BETWEEN 0 AND 1440),
+            updated_at INTEGER NOT NULL
+        );
         """)
         for table in ("admin_account", "student_accounts"):
             existing = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
@@ -217,7 +240,12 @@ def init_db():
         if "event_time" not in event_columns:
             con.execute("ALTER TABLE calendar_events ADD COLUMN event_time TEXT NOT NULL DEFAULT ''")
         con.execute("UPDATE calendar_events SET event_type = 'Prueba' WHERE event_type = 'Certamen'")
-        con.execute("UPDATE calendar_events SET event_type = 'Otro' WHERE event_type = 'Seminario'")
+        con.execute("""UPDATE calendar_events SET event_type = 'Reunión/Revisión/Otro'
+            WHERE event_type IN ('Seminario', 'Otro')""")
+        notification_columns = {row[1] for row in con.execute("PRAGMA table_info(notification_preferences)")}
+        if "other_minutes" not in notification_columns:
+            con.execute("""ALTER TABLE notification_preferences ADD COLUMN other_minutes INTEGER
+                NOT NULL DEFAULT 15 CHECK (other_minutes BETWEEN 0 AND 1440)""")
         subject_columns = {row[1] for row in con.execute("PRAGMA table_info(subjects)")}
         if "color" not in subject_columns:
             con.execute("ALTER TABLE subjects ADD COLUMN color TEXT NOT NULL DEFAULT '#1767cc'")
@@ -543,9 +571,9 @@ class Handler(BaseHTTPRequestHandler):
                 (hashlib.sha256(token.encode()).hexdigest(), int(time.time()))).fetchone()
             if row:
                 return {"authenticated": True, "student_id": row["student_id"], "name": row["name"],
-                        "bio": row["bio"], "avatar_data": row["avatar_data"]}
+                        "tagline": row["bio"][:50], "avatar_data": row["avatar_data"]}
         return {"authenticated": False, "student_id": None, "name": None,
-                "bio": "", "avatar_data": ""}
+                "tagline": "", "avatar_data": ""}
 
     def require_attendance_identity(self, student_id):
         with connect() as con:
@@ -603,30 +631,46 @@ class Handler(BaseHTTPRequestHandler):
         expected = f"Bearer {NOTIFICATION_SECRET}" if NOTIFICATION_SECRET else ""
         return bool(expected and hmac.compare_digest(supplied, expected))
 
-    def notification_jobs(self, con):
+    def notification_jobs(self, con, include_native=False):
         now = datetime.now(timezone.utc)
         oldest = now - timedelta(minutes=60)
-        reminder_by_type = {"Clase": 15, "Presentación": 30, "Prueba": 60}
+        preference_column = {"Clase": "class_minutes", "Presentación": "presentation_minutes",
+                             "Prueba": "test_minutes", "Reunión/Revisión/Otro": "other_minutes"}
         event_rows = rows(con, """
             SELECT e.id, e.event_date, e.event_time, e.event_type, e.title, e.details,
                    sub.name AS subject_name
             FROM calendar_events e JOIN subjects sub ON sub.id = e.subject_id
-            WHERE e.event_time != '' AND e.event_type IN ('Clase', 'Presentación', 'Prueba')
+            WHERE e.event_time != ''
+              AND e.event_type IN ('Clase', 'Presentación', 'Prueba', 'Reunión/Revisión/Otro')
               AND e.event_date >= ? AND e.event_date <= ?
             ORDER BY e.event_date, e.event_time
         """, ((now.astimezone(APP_TIMEZONE) - timedelta(days=1)).date().isoformat(),
               (now.astimezone(APP_TIMEZONE) + timedelta(days=1)).date().isoformat()))
-        subscriptions = rows(con, "SELECT id, endpoint, p256dh, auth FROM push_subscriptions")
+        subscriptions = rows(con, """SELECT ps.id, ps.endpoint, ps.p256dh, ps.auth,
+                COALESCE(np.class_minutes, 15) AS class_minutes,
+                COALESCE(np.presentation_minutes, 30) AS presentation_minutes,
+                COALESCE(np.test_minutes, 60) AS test_minutes,
+                COALESCE(np.other_minutes, 15) AS other_minutes
+            FROM push_subscriptions ps
+            LEFT JOIN notification_preferences np ON np.student_id = ps.student_id""")
+        native_tokens = rows(con, """SELECT nt.id, nt.token,
+                COALESCE(np.class_minutes, 15) AS class_minutes,
+                COALESCE(np.presentation_minutes, 30) AS presentation_minutes,
+                COALESCE(np.test_minutes, 60) AS test_minutes,
+                COALESCE(np.other_minutes, 15) AS other_minutes
+            FROM native_push_tokens nt
+            LEFT JOIN notification_preferences np ON np.student_id = nt.student_id""") if include_native else []
         jobs = []
-        labels = {"Clase": "Clase", "Presentación": "Presentación", "Prueba": "Prueba"}
+        labels = {"Clase": "Clase", "Presentación": "Presentación", "Prueba": "Prueba",
+                  "Reunión/Revisión/Otro": "Reunión/Revisión/Otro"}
         for event in event_rows:
-            reminder = reminder_by_type[event["event_type"]]
             event_local = datetime.fromisoformat(
                 f'{event["event_date"]}T{event["event_time"]}').replace(tzinfo=APP_TIMEZONE)
-            due_at = event_local.astimezone(timezone.utc) - timedelta(minutes=reminder)
-            if not oldest <= due_at <= now + timedelta(minutes=2):
-                continue
             for subscription in subscriptions:
+                reminder = subscription[preference_column[event["event_type"]]]
+                due_at = event_local.astimezone(timezone.utc) - timedelta(minutes=reminder)
+                if not oldest <= due_at <= now + timedelta(minutes=2):
+                    continue
                 delivered = con.execute("""SELECT 1 FROM notification_deliveries
                     WHERE event_id = ? AND subscription_id = ? AND reminder_minutes = ?""",
                     (event["id"], subscription["id"], reminder)).fetchone()
@@ -636,9 +680,32 @@ class Handler(BaseHTTPRequestHandler):
                 if event["details"]:
                     detail += f' · {event["details"]}'
                 jobs.append({
+                    "kind": "web",
                     "event_id": event["id"], "subscription_id": subscription["id"],
                     "reminder_minutes": reminder, "endpoint": subscription["endpoint"],
                     "keys": {"p256dh": subscription["p256dh"], "auth": subscription["auth"]},
+                    "payload": {
+                        "title": f'{labels[event["event_type"]]} en {reminder} minutos: {event["title"]}',
+                        "body": detail, "tag": f'event-{event["id"]}-{reminder}',
+                        "url": f'/?event_date={event["event_date"]}'
+                    }
+                })
+            for native_token in native_tokens:
+                reminder = native_token[preference_column[event["event_type"]]]
+                due_at = event_local.astimezone(timezone.utc) - timedelta(minutes=reminder)
+                if not oldest <= due_at <= now + timedelta(minutes=2):
+                    continue
+                delivered = con.execute("""SELECT 1 FROM native_notification_deliveries
+                    WHERE event_id = ? AND token_id = ? AND reminder_minutes = ?""",
+                    (event["id"], native_token["id"], reminder)).fetchone()
+                if delivered:
+                    continue
+                detail = f'{event["subject_name"]} · Comienza a las {event["event_time"]}'
+                if event["details"]:
+                    detail += f' · {event["details"]}'
+                jobs.append({
+                    "kind": "android", "event_id": event["id"], "token_id": native_token["id"],
+                    "reminder_minutes": reminder, "token": native_token["token"],
                     "payload": {
                         "title": f'{labels[event["event_type"]]} en {reminder} minutos: {event["title"]}',
                         "body": detail, "tag": f'event-{event["id"]}-{reminder}',
@@ -699,14 +766,25 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as con:
                     if path == "/api/notifications/config":
                         student = self.student_status(con)
+                        preferences = {"class_minutes": 15, "presentation_minutes": 30,
+                                       "test_minutes": 60, "other_minutes": 15}
+                        if student["student_id"]:
+                            saved = con.execute("""SELECT class_minutes, presentation_minutes, test_minutes,
+                                other_minutes
+                                FROM notification_preferences WHERE student_id = ?""",
+                                (student["student_id"],)).fetchone()
+                            if saved:
+                                preferences = dict(saved)
                         result = {"supported": bool(VAPID_PUBLIC_KEY and NOTIFICATION_SECRET),
                                   "public_key": VAPID_PUBLIC_KEY,
-                                  "student_authenticated": student["authenticated"]}
+                                  "student_authenticated": student["authenticated"],
+                                  "preferences": preferences}
                     elif path == "/api/notifications/due":
                         if not self.notification_secret_valid():
                             self.send_json({"error": "Acceso no autorizado."}, 403)
                             return
-                        result = {"jobs": self.notification_jobs(con)}
+                        result = {"jobs": self.notification_jobs(
+                            con, self.headers.get("X-Native-Push", "") == "1")}
                     elif path == "/api/overview":
                         result = {
                             "students": rows(con, "SELECT id, name FROM students ORDER BY name"),
@@ -716,8 +794,12 @@ class Handler(BaseHTTPRequestHandler):
                         result = self.admin_status(con)
                     elif path == "/api/student/status":
                         result = self.student_status(con)
+                    elif path == "/api/student/choices":
+                        result = rows(con, """SELECT id, name, substr(bio, 1, 50) AS tagline, avatar_data
+                            FROM students ORDER BY name""")
                     elif path == "/api/student/available":
-                        result = rows(con, """SELECT st.id, st.name FROM students st
+                        result = rows(con, """SELECT st.id, st.name, substr(st.bio, 1, 50) AS tagline,
+                            st.avatar_data FROM students st
                             LEFT JOIN student_accounts a ON a.student_id = st.id
                             WHERE a.student_id IS NULL ORDER BY st.name""")
                     elif path == "/api/grade-settings":
@@ -933,14 +1015,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = path.lstrip("/")
         if name not in {"index.html", "style.css", "app.js", "favicon.svg", "manifest.webmanifest",
-                        "service-worker.js", "icon-192.png", "icon-512.png"}:
+                        "service-worker.js", "icon-192.png", "icon-512.png", "notification-badge.png"}:
             self.send_error(404)
             return
         file = STATIC / name
         mime = {"index.html": "text/html", "style.css": "text/css", "app.js": "text/javascript",
                 "favicon.svg": "image/svg+xml", "manifest.webmanifest": "application/manifest+json",
                 "service-worker.js": "text/javascript", "icon-192.png": "image/png",
-                "icon-512.png": "image/png"}[name]
+                "icon-512.png": "image/png", "notification-badge.png": "image/png"}[name]
         raw = file.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", f"{mime}; charset=utf-8")
@@ -966,6 +1048,38 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/sessions" and not self.require_class_identity():
                 return
             data = self.read_json()
+            if self.path == "/api/notifications/preferences":
+                with connect() as con:
+                    student_id = self.student_status(con)["student_id"]
+                    if not student_id:
+                        self.send_json({"error": "Inicia sesión como estudiante para personalizar los avisos."}, 403)
+                        return
+                    values = []
+                    for key in ("class_minutes", "presentation_minutes", "test_minutes", "other_minutes"):
+                        value = data.get(key)
+                        if isinstance(value, bool):
+                            raise ValueError("Los tiempos de notificación no son válidos.")
+                        try:
+                            value = int(value)
+                        except (TypeError, ValueError):
+                            raise ValueError("Escribe los tiempos de notificación en minutos.")
+                        if value < 0 or value > 1440:
+                            raise ValueError("Los avisos deben programarse entre 0 y 1440 minutos antes.")
+                        values.append(value)
+                    con.execute("""INSERT INTO notification_preferences
+                        (student_id, class_minutes, presentation_minutes, test_minutes, other_minutes, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(student_id) DO UPDATE SET
+                            class_minutes = excluded.class_minutes,
+                            presentation_minutes = excluded.presentation_minutes,
+                            test_minutes = excluded.test_minutes,
+                            other_minutes = excluded.other_minutes,
+                            updated_at = excluded.updated_at""",
+                        (student_id, *values, int(time.time())))
+                self.send_json({"preferences": {"class_minutes": values[0],
+                    "presentation_minutes": values[1], "test_minutes": values[2],
+                    "other_minutes": values[3]}})
+                return
             if self.path == "/api/notifications/subscribe":
                 with connect() as con:
                     student_id = self.student_status(con)["student_id"]
@@ -998,13 +1112,45 @@ class Handler(BaseHTTPRequestHandler):
                                 (endpoint, student_id))
                 self.send_json({"subscribed": False})
                 return
+            if self.path == "/api/notifications/native/subscribe":
+                with connect() as con:
+                    student_id = self.student_status(con)["student_id"]
+                    if not student_id:
+                        self.send_json({"error": "Inicia sesión como estudiante para activar notificaciones."}, 403)
+                        return
+                    token = required_text(data, "token", 4096)
+                    platform = data.get("platform", "android")
+                    if platform != "android":
+                        raise ValueError("La plataforma de notificaciones no es válida.")
+                    now = int(time.time())
+                    con.execute("""INSERT INTO native_push_tokens
+                        (student_id, platform, token, created_at, last_seen)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(token) DO UPDATE SET student_id = excluded.student_id,
+                            platform = excluded.platform, last_seen = excluded.last_seen""",
+                        (student_id, platform, token, now, now))
+                self.send_json({"subscribed": True, "platform": "android"})
+                return
+            if self.path == "/api/notifications/native/unsubscribe":
+                with connect() as con:
+                    student_id = self.student_status(con)["student_id"]
+                    if not student_id:
+                        self.send_json({"error": "Inicia sesión como estudiante."}, 403)
+                        return
+                    token = required_text(data, "token", 4096)
+                    con.execute("DELETE FROM native_push_tokens WHERE token = ? AND student_id = ?",
+                                (token, student_id))
+                self.send_json({"subscribed": False, "platform": "android"})
+                return
             if self.path == "/api/notifications/ack":
                 if not self.notification_secret_valid():
                     self.send_json({"error": "Acceso no autorizado."}, 403)
                     return
                 successful = data.get("successful", [])
                 expired = data.get("expired_subscription_ids", [])
-                if not isinstance(successful, list) or not isinstance(expired, list):
+                expired_tokens = data.get("expired_token_ids", [])
+                if (not isinstance(successful, list) or not isinstance(expired, list)
+                        or not isinstance(expired_tokens, list)):
                     raise ValueError("Confirmación de notificaciones inválida.")
                 with connect() as con:
                     now = int(time.time())
@@ -1013,16 +1159,29 @@ class Handler(BaseHTTPRequestHandler):
                             continue
                         try:
                             event_id = positive_id(item, "event_id")
-                            subscription_id = positive_id(item, "subscription_id")
-                            reminder = positive_id(item, "reminder_minutes")
-                        except ValueError:
+                            reminder = int(item.get("reminder_minutes"))
+                            if reminder < 0 or reminder > 1440:
+                                raise ValueError
+                            if item.get("kind") == "android":
+                                token_id = positive_id(item, "token_id")
+                            else:
+                                subscription_id = positive_id(item, "subscription_id")
+                        except (TypeError, ValueError):
                             continue
-                        con.execute("""INSERT OR IGNORE INTO notification_deliveries
-                            (event_id, subscription_id, reminder_minutes, sent_at)
-                            VALUES (?, ?, ?, ?)""", (event_id, subscription_id, reminder, now))
+                        if item.get("kind") == "android":
+                            con.execute("""INSERT OR IGNORE INTO native_notification_deliveries
+                                (event_id, token_id, reminder_minutes, sent_at)
+                                VALUES (?, ?, ?, ?)""", (event_id, token_id, reminder, now))
+                        else:
+                            con.execute("""INSERT OR IGNORE INTO notification_deliveries
+                                (event_id, subscription_id, reminder_minutes, sent_at)
+                                VALUES (?, ?, ?, ?)""", (event_id, subscription_id, reminder, now))
                     for subscription_id in expired[:1000]:
                         if isinstance(subscription_id, int) and subscription_id > 0:
                             con.execute("DELETE FROM push_subscriptions WHERE id = ?", (subscription_id,))
+                    for token_id in expired_tokens[:1000]:
+                        if isinstance(token_id, int) and token_id > 0:
+                            con.execute("DELETE FROM native_push_tokens WHERE id = ?", (token_id,))
                 self.send_json({"acknowledged": len(successful)})
                 return
             if self.path == "/api/grade-scores":
@@ -1448,7 +1607,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
                     event_time = optional_time(data)
                     event_type = required_text(data, "event_type", 30)
-                    if event_type not in {"Prueba", "Presentación", "Clase", "Otro"}:
+                    if event_type not in {"Prueba", "Presentación", "Clase", "Reunión/Revisión/Otro"}:
                         raise ValueError("Selecciona un tipo de evento válido.")
                     title = required_text(data, "title")
                     details = data.get("details", "")
@@ -1479,17 +1638,17 @@ class Handler(BaseHTTPRequestHandler):
                         self.send_json({"error": "Inicia sesión como estudiante para editar tu perfil."}, 403)
                         return
                     name = required_text(data, "name")
-                    bio = data.get("bio", "")
-                    if not isinstance(bio, str) or len(bio.strip()) > 240:
-                        raise ValueError("La biografía puede tener hasta 240 caracteres.")
+                    tagline = data.get("tagline", "")
+                    if not isinstance(tagline, str) or len(tagline.strip()) > 50:
+                        raise ValueError("La frase de perfil puede tener hasta 50 caracteres.")
                     avatar_data = data.get("avatar_data", "")
                     if not isinstance(avatar_data, str) or len(avatar_data) > 100_000:
                         raise ValueError("La foto de perfil es demasiado grande.")
                     if avatar_data and not avatar_data.startswith("data:image/jpeg;base64,"):
                         raise ValueError("La foto de perfil no tiene un formato válido.")
                     con.execute("UPDATE students SET name = ?, bio = ?, avatar_data = ? WHERE id = ?",
-                                (name, bio.strip(), avatar_data, student_id))
-                    result = {"student_id": student_id, "name": name, "bio": bio.strip(),
+                                (name, tagline.strip(), avatar_data, student_id))
+                    result = {"student_id": student_id, "name": name, "tagline": tagline.strip(),
                               "avatar_data": avatar_data}
                 self.send_json(result)
             except sqlite3.IntegrityError:
@@ -1528,7 +1687,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("La fecha debe tener el formato AAAA-MM-DD.") from None
                         event_time = optional_time(data)
                         event_type = required_text(data, "event_type", 30)
-                        if event_type not in {"Prueba", "Presentación", "Clase", "Otro"}:
+                        if event_type not in {"Prueba", "Presentación", "Clase", "Reunión/Revisión/Otro"}:
                             raise ValueError("Selecciona un tipo de evento válido.")
                         title = required_text(data, "title")
                         details = data.get("details", "")

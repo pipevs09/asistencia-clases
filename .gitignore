@@ -7,3 +7,9 @@ __pycache__/
 .env
 storage/
 backups/
+mobile/node_modules/
+mobile/android/
+mobile/ios/
+mobile/dist/
+mobile/google-services.json
+mobile/android/app/google-services.json

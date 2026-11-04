@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: '20'
       - name: Instalar componente Web Push
-        run: npm install --no-save web-push@3.6.7
+        run: npm install --no-save web-push@3.6.7 firebase-admin@13.5.0
       - name: Enviar notificaciones pendientes
         env:
           APP_URL: ${{ secrets.APP_URL }}
@@ -27,4 +27,5 @@ jobs:
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
         run: node scripts/send_notifications.mjs

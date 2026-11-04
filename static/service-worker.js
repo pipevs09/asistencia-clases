@@ -1,13 +1,15 @@
-const CACHE_NAME = 'asistencia-shell-v101';
+const CACHE_NAME = 'asistencia-shell-v113';
+const TRANSPARENT_NOTIFICATION_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/style.css?v=101',
-  '/app.js?v=101',
+  '/style.css?v=110',
+  '/app.js?v=110',
   '/favicon.svg',
   '/manifest.webmanifest',
   '/icon-192.png',
-  '/icon-512.png'
+  '/icon-512.png',
+  '/notification-badge.png'
 ];
 
 self.addEventListener('install', event => {
@@ -51,8 +53,8 @@ self.addEventListener('push', event => {
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
   event.waitUntil(self.registration.showNotification(data.title || 'Registro de Asistencia', {
     body: data.body || 'Tienes una actividad próxima.',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    icon: TRANSPARENT_NOTIFICATION_ICON,
+    badge: '/notification-badge.png',
     tag: data.tag || 'asistencia-recordatorio',
     data: { url: data.url || '/' }
   }));

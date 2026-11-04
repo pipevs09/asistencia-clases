@@ -10,14 +10,10 @@ try { activeThemeKit = localStorage.getItem('asistencia-theme-kit') || 'azul'; }
 if (!THEME_KITS.some(kit => kit.id === activeThemeKit)) activeThemeKit = 'azul';
 document.documentElement.dataset.theme = activeThemeKit;
 const appIntro = $('app-intro');
-if (appIntro) {
-  const removeIntro = () => appIntro.remove();
-  appIntro.addEventListener('animationend', event => {
-    if (event.target === appIntro) removeIntro();
-  });
-  setTimeout(removeIntro, 1500);
-}
+const introStartedAt = performance.now();
 let overview = { students: [], subjects: [] };
+let studentChoices = [];
+let availableStudentChoices = [];
 let currentSubject = 'all';
 let reportSubject = 'all';
 let reportStudent = 'all';
@@ -45,6 +41,7 @@ let studentActivation = null;
 let pendingProfileAvatar = '';
 let avatarCropState = null;
 let notificationConfig = null;
+let nativePushActionsReady = false;
 let headerGreetingTimer = null;
 let headerGreetingCleanupTimer = null;
 
@@ -106,6 +103,19 @@ function message(text, isError = false) {
   message.timer = setTimeout(() => box.hidden = true, 4500);
 }
 
+function profileSaveMessage(text, isError = false) {
+  const box = $('profile-save-message');
+  box.textContent = text;
+  box.classList.toggle('error', isError);
+  box.hidden = false;
+}
+
+function studentDialogMessage(text = '') {
+  const box = $('student-dialog-message');
+  box.textContent = text;
+  box.hidden = !text;
+}
+
 function option(select, value, label) {
   const item = document.createElement('option');
   item.value = value;
@@ -131,15 +141,17 @@ function renderProfileSummary() {
   const profileButton = $('profile-toggle');
   const avatar = studentState.authenticated ? studentState.avatar_data : '';
   profileButton.classList.toggle('has-avatar', Boolean(avatar));
+  profileButton.classList.toggle('guest-avatar', !studentState.authenticated && !adminState.authenticated);
+  profileButton.classList.toggle('admin-avatar', adminState.authenticated && !studentState.authenticated);
   profileButton.style.backgroundImage = avatar ? `url(${avatar})` : '';
   $('personal-profile').hidden = !studentState.authenticated;
   $('profile-login-required').hidden = studentState.authenticated;
   if (studentState.authenticated) {
     $('profile-name').value = studentState.name || '';
-    $('profile-bio').value = studentState.bio || '';
+    $('profile-tagline').value = (studentState.tagline || '').slice(0, 50);
     pendingProfileAvatar = studentState.avatar_data || '';
     renderProfileAvatar();
-    updateProfileBioCount();
+    updateProfileTaglineCount();
   }
   renderExportChoices();
 }
@@ -153,8 +165,8 @@ function renderProfileAvatar() {
   fallback.textContent = (studentState.name || '?').trim().charAt(0).toUpperCase();
 }
 
-function updateProfileBioCount() {
-  $('profile-bio-count').textContent = `${$('profile-bio').value.length}/240`;
+function updateProfileTaglineCount() {
+  $('profile-tagline-count').textContent = `${$('profile-tagline').value.length}/50`;
 }
 
 function loadAvatarImage(file) {
@@ -259,18 +271,97 @@ async function loadStudentStatus() {
   }
 }
 
-async function openStudentDialog(firstTime = false) {
+async function openStudentDialog(firstTime = false, selectedId = null) {
   try {
-    const available = await api('/api/student/available');
-    fillSelect('student-register-name', available, 'Selecciona tu nombre');
-    fillSelect('student-login-name', overview.students, 'Selecciona tu nombre');
+    const [choices, available] = await Promise.all([
+      api('/api/student/choices'), api('/api/student/available')
+    ]);
+    studentChoices = choices;
+    availableStudentChoices = available;
+    renderStudentChoiceList('student-login-list', 'student-login-name', studentChoices, selectedId);
+    renderStudentChoiceList('student-register-list', 'student-register-name', availableStudentChoices,
+      firstTime ? selectedId : null);
     setStudentMode(firstTime);
     if (!$('student-dialog').open) $('student-dialog').showModal();
   } catch (error) { message(error.message, true); }
 }
 
+function renderStudentChoiceList(containerId, inputId, entries, selectedId = null, onChoose = null) {
+  const list = $(containerId);
+  const input = inputId ? $(inputId) : null;
+  list.replaceChildren();
+  if (!entries.length) {
+    list.append(element('div', 'student-choice-empty', 'No hay estudiantes disponibles.'));
+    if (input) input.value = '';
+    return;
+  }
+  if (input) input.value = selectedId ? String(selectedId) : '';
+  entries.forEach(student => {
+    const button = element('button', 'student-choice');
+    button.type = 'button';
+    button.dataset.studentId = String(student.id);
+    button.setAttribute('aria-pressed', String(Number(selectedId) === Number(student.id)));
+    button.classList.toggle('selected', Number(selectedId) === Number(student.id));
+    const avatar = element('span', 'student-choice-avatar');
+    if (student.avatar_data) {
+      avatar.style.backgroundImage = `url(${student.avatar_data})`;
+      avatar.classList.add('has-image');
+    } else {
+      avatar.textContent = student.name.trim().charAt(0).toUpperCase();
+    }
+    const copy = element('span', 'student-choice-copy');
+    copy.append(element('span', 'student-choice-name', student.name));
+    if (student.tagline) copy.append(element('small', 'student-choice-tagline', student.tagline));
+    button.append(avatar, copy);
+    button.addEventListener('click', () => {
+      if ($('student-dialog')?.open) studentDialogMessage();
+      list.querySelectorAll('.student-choice').forEach(choice => {
+        const selected = choice === button;
+        choice.classList.toggle('selected', selected);
+        choice.setAttribute('aria-pressed', String(selected));
+      });
+      if (input) input.value = String(student.id);
+      if (onChoose) onChoose(student);
+    });
+    list.append(button);
+  });
+}
+
+function dismissAppIntro(fast = false) {
+  if (!appIntro || !appIntro.isConnected || appIntro.classList.contains('is-leaving')) return;
+  if (fast) appIntro.classList.add('fast-exit');
+  appIntro.classList.add('is-leaving');
+  appIntro.addEventListener('animationend', event => {
+    if (event.target === appIntro) appIntro.remove();
+  }, { once: true });
+  setTimeout(() => appIntro?.remove(), fast ? 260 : 1300);
+}
+
+async function showIntroAccess() {
+  if (!appIntro || !appIntro.isConnected) return;
+  try {
+    studentChoices = await api('/api/student/choices');
+    renderStudentChoiceList('intro-student-list', null, studentChoices, null,
+      student => openStudentDialog(false, student.id));
+  } catch (error) {
+    $('intro-student-list').replaceChildren(element('div', 'student-choice-empty', error.message));
+  }
+  const wait = Math.max(0, 950 - (performance.now() - introStartedAt));
+  setTimeout(() => {
+    if (!appIntro?.isConnected) return;
+    $('intro-access').hidden = false;
+    requestAnimationFrame(() => {
+      appIntro.classList.add('move-logo');
+      setTimeout(() => {
+        if (appIntro?.isConnected) appIntro.classList.add('show-access');
+      }, 430);
+    });
+  }, wait);
+}
+
 function setStudentMode(firstTime) {
   studentActivation = null;
+  studentDialogMessage();
   $('student-login-form').hidden = firstTime;
   $('student-code-form').hidden = !firstTime;
   $('student-register-form').hidden = true;
@@ -356,30 +447,108 @@ function urlBase64ToBytes(value) {
   return Uint8Array.from([...raw].map(character => character.charCodeAt(0)));
 }
 
+function nativePushPlugin() {
+  if (window.Capacitor?.getPlatform?.() !== 'android') return null;
+  return window.Capacitor?.Plugins?.PushNotifications || null;
+}
+
+function savedNativePushToken() {
+  try { return localStorage.getItem('asistencia-native-push-token') || ''; } catch { return ''; }
+}
+
+function saveNativePushToken(token = '') {
+  try {
+    if (token) localStorage.setItem('asistencia-native-push-token', token);
+    else localStorage.removeItem('asistencia-native-push-token');
+  } catch {}
+}
+
+async function setupNativePushActions() {
+  const plugin = nativePushPlugin();
+  if (!plugin || nativePushActionsReady) return;
+  nativePushActionsReady = true;
+  await plugin.addListener('pushNotificationActionPerformed', event => {
+    const target = event.notification?.data?.url;
+    if (target) location.assign(new URL(target, location.origin).href);
+  });
+}
+
+async function registerNativePush(plugin) {
+  return new Promise(async (resolve, reject) => {
+    let settled = false;
+    const finish = async (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      await registrationListener.remove();
+      await errorListener.remove();
+      callback(value);
+    };
+    const registrationListener = await plugin.addListener('registration', token =>
+      finish(resolve, token.value));
+    const errorListener = await plugin.addListener('registrationError', error =>
+      finish(reject, new Error(error?.error || 'No se pudo registrar este teléfono.')));
+    const timer = setTimeout(() => finish(reject,
+      new Error('El registro de notificaciones tardó demasiado. Intenta nuevamente.')), 15000);
+    await plugin.register();
+  });
+}
+
 async function refreshNotificationStatus() {
   const status = $('notification-status');
   const button = $('notification-toggle');
   const help = $('notification-help');
+  const preferenceInputs = [
+    $('notification-class-minutes'),
+    $('notification-presentation-minutes'),
+    $('notification-test-minutes'),
+    $('notification-other-minutes')
+  ];
+  const preferenceSave = $('notification-preferences-save');
   status.textContent = 'Comprobando…';
   button.disabled = true;
+  preferenceInputs.forEach(input => { input.disabled = true; });
+  preferenceSave.disabled = true;
   help.textContent = '';
-  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+  const nativePush = nativePushPlugin();
+  if (!nativePush && (!('serviceWorker' in navigator) || !('PushManager' in window)
+      || !('Notification' in window))) {
     status.textContent = 'No compatible';
     help.textContent = 'Este navegador no admite notificaciones web.';
     return;
   }
   try {
     notificationConfig = await api('/api/notifications/config');
+    const preferences = notificationConfig.preferences || {};
+    $('notification-class-minutes').value = preferences.class_minutes ?? 15;
+    $('notification-presentation-minutes').value = preferences.presentation_minutes ?? 30;
+    $('notification-test-minutes').value = preferences.test_minutes ?? 60;
+    $('notification-other-minutes').value = preferences.other_minutes ?? 15;
     if (!notificationConfig.student_authenticated) {
       status.textContent = 'Sesión requerida';
       button.textContent = 'Inicia sesión como estudiante';
       help.textContent = 'Las notificaciones se vinculan a tu cuenta y a este dispositivo.';
       return;
     }
+    preferenceInputs.forEach(input => { input.disabled = false; });
+    preferenceSave.disabled = false;
     if (!notificationConfig.supported) {
       status.textContent = 'Pendiente de configurar';
       button.textContent = 'Activar notificaciones';
       help.textContent = 'Falta configurar las claves de notificación en el servidor.';
+      return;
+    }
+    if (nativePush) {
+      await setupNativePushActions();
+      const permission = await nativePush.checkPermissions();
+      const active = Boolean(savedNativePushToken()) && permission.receive === 'granted';
+      status.textContent = active ? 'Activadas' : permission.receive === 'denied' ? 'Bloqueadas' : 'Desactivadas';
+      button.textContent = active ? 'Desactivar notificaciones' : 'Activar notificaciones';
+      button.disabled = permission.receive === 'denied';
+      help.textContent = permission.receive === 'denied'
+        ? 'Debes permitir las notificaciones desde los ajustes de Android.'
+        : active ? 'La aplicación recibirá recordatorios nativos.'
+          : 'Android solicitará permiso una sola vez.';
       return;
     }
     const registration = await navigator.serviceWorker.ready;
@@ -404,6 +573,31 @@ async function refreshNotificationStatus() {
   }
 }
 
+async function saveNotificationPreferences(event) {
+  event.preventDefault();
+  const button = $('notification-preferences-save');
+  const values = {
+    class_minutes: Number($('notification-class-minutes').value),
+    presentation_minutes: Number($('notification-presentation-minutes').value),
+    test_minutes: Number($('notification-test-minutes').value),
+    other_minutes: Number($('notification-other-minutes').value)
+  };
+  if (Object.values(values).some(value => !Number.isInteger(value) || value < 0 || value > 1440)) {
+    message('Escribe minutos completos entre 0 y 1440.', true);
+    return;
+  }
+  button.disabled = true;
+  try {
+    const result = await api('/api/notifications/preferences', values);
+    notificationConfig.preferences = result.preferences;
+    message('Tiempos de notificación guardados.');
+  } catch (error) {
+    message(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function toggleNotifications() {
   if (!notificationConfig?.student_authenticated) {
     await openStudentDialog();
@@ -412,6 +606,29 @@ async function toggleNotifications() {
   const button = $('notification-toggle');
   button.disabled = true;
   try {
+    const nativePush = nativePushPlugin();
+    if (nativePush) {
+      await setupNativePushActions();
+      const existingToken = savedNativePushToken();
+      if (existingToken) {
+        await api('/api/notifications/native/unsubscribe', { token: existingToken });
+        await nativePush.unregister();
+        saveNativePushToken();
+        message('Notificaciones nativas desactivadas en este teléfono.');
+      } else {
+        let permission = await nativePush.checkPermissions();
+        if (permission.receive !== 'granted') permission = await nativePush.requestPermissions();
+        if (permission.receive !== 'granted') {
+          throw new Error('No se concedió permiso para enviar notificaciones.');
+        }
+        const token = await registerNativePush(nativePush);
+        await api('/api/notifications/native/subscribe', { token, platform: 'android' });
+        saveNativePushToken(token);
+        message('Notificaciones nativas activadas en este teléfono.');
+      }
+      await refreshNotificationStatus();
+      return;
+    }
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
     if (subscription) {
@@ -2344,6 +2561,7 @@ $('open-profile').addEventListener('click', () => {
   $('profile-menu').hidden = true;
   $('profile-toggle').setAttribute('aria-expanded', 'false');
   renderProfileSummary();
+  $('profile-save-message').hidden = true;
   $('profile-dialog').showModal();
 });
 $('open-settings').addEventListener('click', () => {
@@ -2355,8 +2573,9 @@ $('open-settings').addEventListener('click', () => {
 });
 $('close-settings').addEventListener('click', () => $('settings-dialog').close());
 $('notification-toggle').addEventListener('click', toggleNotifications);
+$('notification-preferences-form').addEventListener('submit', saveNotificationPreferences);
 $('close-profile').addEventListener('click', () => $('profile-dialog').close());
-$('profile-bio').addEventListener('input', updateProfileBioCount);
+$('profile-tagline').addEventListener('input', updateProfileTaglineCount);
 $('profile-photo').addEventListener('change', async event => {
   const file = event.target.files[0];
   if (!file) return;
@@ -2416,14 +2635,14 @@ $('profile-form').addEventListener('submit', async event => {
   button.disabled = true;
   try {
     const result = await api('/api/profile', {
-      name: $('profile-name').value, bio: $('profile-bio').value,
+      name: $('profile-name').value, tagline: $('profile-tagline').value,
       avatar_data: pendingProfileAvatar
     }, 'PATCH');
     studentState = { ...studentState, ...result, authenticated: true };
     await loadOverview();
     renderProfileSummary();
-    message('Perfil actualizado.');
-  } catch (error) { message(error.message, true); }
+    profileSaveMessage('Perfil actualizado.');
+  } catch (error) { profileSaveMessage(error.message, true); }
   finally { button.disabled = false; }
 });
 document.addEventListener('click', () => {
@@ -2468,6 +2687,12 @@ $('student-button').addEventListener('click', async () => {
   } catch (error) { message(error.message, true); }
 });
 $('close-student-dialog').addEventListener('click', () => $('student-dialog').close());
+$('intro-first-time').addEventListener('click', () => openStudentDialog(true));
+$('intro-admin-login').addEventListener('click', openAdminDialog);
+$('intro-guest').addEventListener('click', () => {
+  dismissAppIntro();
+  showHeaderGreeting(null);
+});
 $('close-activation-dialog').addEventListener('click', () => $('activation-dialog').close());
 $('activation-dialog').addEventListener('close', () => { $('activation-code').textContent = ''; });
 $('copy-activation-code').addEventListener('click', async () => {
@@ -2477,16 +2702,19 @@ $('copy-activation-code').addEventListener('click', async () => {
   } catch (error) { message('No se pudo copiar. Selecciona el código y cópialo manualmente.', true); }
 });
 $('student-login-mode').addEventListener('click', () => setStudentMode(false));
+$('student-login-password').addEventListener('input', () => studentDialogMessage());
+$('student-activation-code').addEventListener('input', () => studentDialogMessage());
 $('student-first-mode').addEventListener('click', async () => {
   try {
-    const available = await api('/api/student/available');
-    fillSelect('student-register-name', available, 'Selecciona tu nombre');
+    availableStudentChoices = await api('/api/student/available');
+    renderStudentChoiceList('student-register-list', 'student-register-name', availableStudentChoices);
     setStudentMode(true);
-  } catch (error) { message(error.message, true); }
+  } catch (error) { studentDialogMessage(error.message); }
 });
 $('student-code-form').addEventListener('submit', async event => {
   event.preventDefault();
   const studentId = Number($('student-register-name').value);
+  if (!studentId) { studentDialogMessage('Selecciona tu perfil.'); return; }
   const code = $('student-activation-code').value.trim().toUpperCase();
   try {
     await api('/api/student/activation-check', { student_id: studentId, activation_code: code });
@@ -2495,31 +2723,33 @@ $('student-code-form').addEventListener('submit', async event => {
     $('student-register-form').hidden = false;
     $('student-dialog-info').textContent = 'Código aceptado. Ahora crea tu contraseña.';
     $('student-register-password').focus();
-  } catch (error) { message(error.message, true); }
+  } catch (error) { studentDialogMessage(error.message); }
 });
 $('student-login-form').addEventListener('submit', async event => {
   event.preventDefault();
+  const studentId = Number($('student-login-name').value);
+  if (!studentId) { studentDialogMessage('Selecciona tu perfil.'); return; }
   try {
     await api('/api/student/login', {
-      student_id: Number($('student-login-name').value),
+      student_id: studentId,
       password: $('student-login-password').value
     });
     $('student-login-password').value = '';
     $('student-dialog').close();
     await loadStudentStatus();
+    dismissAppIntro();
     showHeaderGreeting(studentState.name);
-    message(`Bienvenido, ${studentState.name}.`);
-  } catch (error) { message(error.message, true); }
+  } catch (error) { studentDialogMessage(error.message); }
 });
 $('student-register-form').addEventListener('submit', async event => {
   event.preventDefault();
   const password = $('student-register-password').value;
   if (password.length < 6 || !/[A-ZÁÉÍÓÚÑ]/.test(password) || !/[0-9]/.test(password)) {
-    message('Usa al menos 6 caracteres, una mayúscula y un número.', true);
+    studentDialogMessage('Usa al menos 6 caracteres, una mayúscula y un número.');
     return;
   }
   if (password !== $('student-register-confirm').value) {
-    message('Las contraseñas no coinciden.', true);
+    studentDialogMessage('Las contraseñas no coinciden.');
     return;
   }
   try {
@@ -2532,9 +2762,10 @@ $('student-register-form').addEventListener('submit', async event => {
     studentActivation = null;
     $('student-dialog').close();
     await loadStudentStatus();
+    dismissAppIntro();
     showHeaderGreeting(studentState.name);
     message(`Cuenta creada para ${studentState.name}.`);
-  } catch (error) { message(error.message, true); }
+  } catch (error) { studentDialogMessage(error.message); }
 });
 $('admin-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -2556,9 +2787,9 @@ $('admin-form').addEventListener('submit', async event => {
     $('admin-confirm').value = '';
     $('admin-dialog').close();
     await loadAdminStatus();
+    dismissAppIntro();
     showHeaderGreeting('Administrador');
-    $('tab-setup').click();
-    message(setup ? 'Administrador configurado.' : 'Sesión de administrador iniciada.');
+    if (setup) message('Administrador configurado.');
   } catch (error) { message(error.message, true); }
   finally { button.disabled = false; }
 });
@@ -2598,11 +2829,17 @@ if ('serviceWorker' in navigator) {
 }
 
 applyThemeKit(activeThemeKit, false);
+setupNativePushActions().catch(() => {});
 Promise.all([loadAdminStatus(), loadStudentStatus()])
-  .then(() => {
+  .then(async () => {
     const greetingName = studentState.authenticated ? studentState.name
       : adminState.authenticated ? 'Administrador' : null;
     showHeaderGreeting(greetingName, 650);
-    return loadOverview();
+    if (studentState.authenticated || adminState.authenticated) {
+      const remainingIntro = Math.max(0, 800 - (performance.now() - introStartedAt));
+      setTimeout(() => dismissAppIntro(true), remainingIntro);
+    }
+    await loadOverview();
+    if (!studentState.authenticated && !adminState.authenticated) await showIntroAccess();
   })
   .catch(error => message(error.message, true));

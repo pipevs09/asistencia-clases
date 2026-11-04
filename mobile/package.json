@@ -1,0 +1,21 @@
+{
+  "name": "registro-asistencia-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aplicación Android paralela para Registro de Asistencia.",
+  "scripts": {
+    "android:add": "cap add android",
+    "android:sync": "cap sync android",
+    "android:assets": "capacitor-assets generate --android --iconBackgroundColor '#1767cc' --iconBackgroundColorDark '#1767cc' --splashBackgroundColor '#1767cc' --splashBackgroundColorDark '#1767cc'"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/push-notifications": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.0.0"
+  }
+}

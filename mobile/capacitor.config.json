@@ -1,0 +1,32 @@
+{
+  "appId": "cl.pipevs.asistencia",
+  "appName": "Registro de Asistencia",
+  "webDir": "www",
+  "server": {
+    "url": "https://pipevs.pythonanywhere.com",
+    "cleartext": false,
+    "allowNavigation": [
+      "pipevs.pythonanywhere.com"
+    ]
+  },
+  "android": {
+    "backgroundColor": "#1767cc",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 800,
+      "launchAutoHide": true,
+      "backgroundColor": "#1767cc",
+      "androidScaleType": "CENTER",
+      "showSpinner": false
+    },
+    "PushNotifications": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    }
+  }
+}
