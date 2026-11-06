@@ -8,7 +8,7 @@ manifest = manifest.replace(
   ''
 );
 
-if (!manifest.includes('cl.pipevs.asistencia.LauncherAzul')) {
+if (!manifest.includes('android:name=".LauncherAzul"')) {
   const additions = `
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
@@ -73,7 +73,7 @@ if (!manifest.includes('cl.pipevs.asistencia.LauncherAzul')) {
   manifest = manifest.replace(/\s*<\/application>/, `${additions}    </application>`);
 }
 
-if (!manifest.includes('cl.pipevs.asistencia.LauncherAzul')) {
+if (!manifest.includes('android:name=".LauncherAzul"')) {
   throw new Error('No se pudieron incorporar los iconos alternativos al manifiesto.');
 }
 
