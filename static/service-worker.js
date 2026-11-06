@@ -1,4 +1,4 @@
-const CACHE_NAME = 'asistencia-shell-v117';
+const CACHE_NAME = 'asistencia-shell-v118';
 const TRANSPARENT_NOTIFICATION_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
 const APP_SHELL = [
   '/',
