@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="icon_azul">#1767CC</color>
+    <color name="icon_esmeralda">#16866F</color>
+    <color name="icon_violeta">#7653C6</color>
+    <color name="icon_coral">#C45F50</color>
+    <color name="notification_icon_color">#1767CC</color>
+</resources>

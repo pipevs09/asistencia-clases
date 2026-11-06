@@ -13,3 +13,5 @@ mobile/ios/
 mobile/dist/
 mobile/google-services.json
 mobile/android/app/google-services.json
+mobile/*.apk
+static/*.apk

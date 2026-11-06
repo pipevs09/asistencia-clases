@@ -28,6 +28,12 @@ STATIC = ROOT / "static"
 NOTIFICATION_SECRET = os.environ.get("ASISTENCIA_NOTIFICATION_SECRET", "")
 VAPID_PUBLIC_KEY = os.environ.get("ASISTENCIA_VAPID_PUBLIC_KEY", "")
 APP_TIMEZONE = ZoneInfo("America/Punta_Arenas")
+THEME_COLORS = {
+    "azul": "#1767cc",
+    "esmeralda": "#16866f",
+    "violeta": "#7653c6",
+    "coral": "#c45f50",
+}
 
 
 class SingleInstanceHTTPServer(ThreadingHTTPServer):
@@ -246,11 +252,17 @@ def init_db():
         if "other_minutes" not in notification_columns:
             con.execute("""ALTER TABLE notification_preferences ADD COLUMN other_minutes INTEGER
                 NOT NULL DEFAULT 15 CHECK (other_minutes BETWEEN 0 AND 1440)""")
+        native_token_columns = {row[1] for row in con.execute("PRAGMA table_info(native_push_tokens)")}
+        if "theme_id" not in native_token_columns:
+            con.execute("ALTER TABLE native_push_tokens ADD COLUMN theme_id TEXT NOT NULL DEFAULT 'azul'")
+        if "theme_color" not in native_token_columns:
+            con.execute("ALTER TABLE native_push_tokens ADD COLUMN theme_color TEXT NOT NULL DEFAULT '#1767cc'")
         subject_columns = {row[1] for row in con.execute("PRAGMA table_info(subjects)")}
         if "color" not in subject_columns:
             con.execute("ALTER TABLE subjects ADD COLUMN color TEXT NOT NULL DEFAULT '#1767cc'")
         if "abbreviation" not in subject_columns:
             con.execute("ALTER TABLE subjects ADD COLUMN abbreviation TEXT NOT NULL DEFAULT ''")
+        con.execute("UPDATE subjects SET abbreviation = 'OTRO' WHERE LOWER(TRIM(name)) = 'otro'")
         evaluation_columns = {row[1] for row in con.execute("PRAGMA table_info(grade_evaluations)")}
         if "substitutable" not in evaluation_columns:
             con.execute("ALTER TABLE grade_evaluations ADD COLUMN substitutable INTEGER NOT NULL DEFAULT 0")
@@ -333,15 +345,19 @@ def required_color(data, key="color"):
 
 
 def default_abbreviation(name):
+    if name.strip().lower() == "otro":
+        return "OTRO"
     compact = "".join(char for char in name if char.isalpha())
     return (compact[:3] or "RAM").upper()
 
 
-def required_abbreviation(data, key="abbreviation"):
+def required_abbreviation(data, subject_name, key="abbreviation"):
     value = data.get(key)
     if not isinstance(value, str):
         raise ValueError("El diminutivo del ramo es obligatorio.")
     value = value.strip().upper()
+    if subject_name.strip().lower() == "otro":
+        return "OTRO"
     if not 1 <= len(value) <= 3 or not all(char.isalpha() for char in value):
         raise ValueError("El diminutivo debe tener entre 1 y 3 letras.")
     return value
@@ -653,7 +669,7 @@ class Handler(BaseHTTPRequestHandler):
                 COALESCE(np.other_minutes, 15) AS other_minutes
             FROM push_subscriptions ps
             LEFT JOIN notification_preferences np ON np.student_id = ps.student_id""")
-        native_tokens = rows(con, """SELECT nt.id, nt.token,
+        native_tokens = rows(con, """SELECT nt.id, nt.token, nt.theme_id, nt.theme_color,
                 COALESCE(np.class_minutes, 15) AS class_minutes,
                 COALESCE(np.presentation_minutes, 30) AS presentation_minutes,
                 COALESCE(np.test_minutes, 60) AS test_minutes,
@@ -709,7 +725,9 @@ class Handler(BaseHTTPRequestHandler):
                     "payload": {
                         "title": f'{labels[event["event_type"]]} en {reminder} minutos: {event["title"]}',
                         "body": detail, "tag": f'event-{event["id"]}-{reminder}',
-                        "url": f'/?event_date={event["event_date"]}'
+                        "url": f'/?event_date={event["event_date"]}',
+                        "theme_id": native_token["theme_id"],
+                        "color": native_token["theme_color"]
                     }
                 })
         return jobs
@@ -764,7 +782,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 query = parse_qs(parsed.query)
                 with connect() as con:
-                    if path == "/api/notifications/config":
+                    if path == "/api/apk-status":
+                        apk = STATIC / "Registro_de_Asistencia.apk"
+                        result = {"available": apk.is_file(),
+                                  "filename": "Registro_de_Asistencia.apk"}
+                    elif path == "/api/notifications/config":
                         student = self.student_status(con)
                         preferences = {"class_minutes": 15, "presentation_minutes": 30,
                                        "test_minutes": 60, "other_minutes": 15}
@@ -817,6 +839,7 @@ class Handler(BaseHTTPRequestHandler):
                                    COALESCE(gs.exam_is_failing, 0) AS exam_is_failing
                             FROM subjects sub
                             LEFT JOIN grade_settings gs ON gs.subject_id = sub.id
+                            WHERE LOWER(TRIM(sub.name)) <> 'otro'
                             ORDER BY sub.name
                         """)
                         for subject in result:
@@ -866,7 +889,8 @@ class Handler(BaseHTTPRequestHandler):
                                      ELSE 0 END AS absent
                             FROM sessions s JOIN subjects sub ON sub.id = s.subject_id
                             LEFT JOIN attendance a ON a.session_id = s.id
-                            WHERE (? IS NULL OR s.subject_id = ?) GROUP BY s.id
+                            WHERE LOWER(TRIM(sub.name)) <> 'otro'
+                              AND (? IS NULL OR s.subject_id = ?) GROUP BY s.id
                             ORDER BY s.class_date DESC, s.id DESC
                         """, (viewer_student_id, viewer_student_id, subject_id, subject_id))
                     elif path == "/api/session":
@@ -901,7 +925,11 @@ class Handler(BaseHTTPRequestHandler):
                                    SUM(CASE WHEN s.id IS NOT NULL AND (a.status IS NULL OR a.status = 'ausente') THEN 1 ELSE 0 END) AS absent,
                                    SUM(CASE WHEN a.status = 'justificado' THEN 1 ELSE 0 END) AS justified
                             FROM students st
-                            LEFT JOIN sessions s ON s.has_attendance = 1 AND (? IS NULL OR s.subject_id = ?)
+                            LEFT JOIN sessions s ON s.has_attendance = 1
+                              AND s.subject_id NOT IN (
+                                SELECT id FROM subjects WHERE LOWER(TRIM(name)) = 'otro'
+                              )
+                              AND (? IS NULL OR s.subject_id = ?)
                             LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = st.id
                             WHERE (? IS NULL OR st.id = ?)
                             GROUP BY st.id ORDER BY st.name
@@ -917,6 +945,7 @@ class Handler(BaseHTTPRequestHandler):
                                 JOIN subjects sub ON sub.id = s.subject_id
                                 LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = ?
                                 WHERE (? IS NULL OR s.subject_id = ?)
+                                  AND LOWER(TRIM(sub.name)) <> 'otro'
                                   AND s.has_attendance = 1
                                   AND (a.status IS NULL OR a.status = 'ausente')
                                 ORDER BY s.class_date DESC, s.id DESC
@@ -931,6 +960,7 @@ class Handler(BaseHTTPRequestHandler):
                                     FROM subjects sub
                                     LEFT JOIN sessions s ON s.subject_id = sub.id AND s.has_attendance = 1
                                     LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = ?
+                                    WHERE LOWER(TRIM(sub.name)) <> 'otro'
                                     GROUP BY sub.id ORDER BY sub.name
                                 """, (item["id"],))
                                 for subject in item["subjects"]:
@@ -966,6 +996,7 @@ class Handler(BaseHTTPRequestHandler):
                             FROM sessions s JOIN subjects sub ON sub.id = s.subject_id
                             LEFT JOIN attendance a ON a.session_id = s.id AND a.student_id = ?
                             WHERE s.class_date >= ? AND s.class_date < ?
+                              AND LOWER(TRIM(sub.name)) <> 'otro'
                             ORDER BY s.class_date, sub.name, s.class_number
                         """, (student_id, student_id, month + "-01", month + "-32"))
                     elif path == "/api/events/next-test":
@@ -1015,17 +1046,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = path.lstrip("/")
         if name not in {"index.html", "style.css", "app.js", "favicon.svg", "manifest.webmanifest",
-                        "service-worker.js", "icon-192.png", "icon-512.png", "notification-badge.png"}:
+                        "service-worker.js", "icon-192.png", "icon-512.png", "notification-badge.png",
+                        "Registro_de_Asistencia.apk"}:
             self.send_error(404)
             return
         file = STATIC / name
         mime = {"index.html": "text/html", "style.css": "text/css", "app.js": "text/javascript",
                 "favicon.svg": "image/svg+xml", "manifest.webmanifest": "application/manifest+json",
                 "service-worker.js": "text/javascript", "icon-192.png": "image/png",
-                "icon-512.png": "image/png", "notification-badge.png": "image/png"}[name]
+                "icon-512.png": "image/png", "notification-badge.png": "image/png",
+                "Registro_de_Asistencia.apk": "application/vnd.android.package-archive"}[name]
+        if not file.is_file():
+            self.send_error(404)
+            return
         raw = file.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", f"{mime}; charset=utf-8")
+        self.send_header("Content-Type", mime if name.endswith(".apk") else f"{mime}; charset=utf-8")
+        if name.endswith(".apk"):
+            self.send_header("Content-Disposition", 'attachment; filename="Registro_de_Asistencia.apk"')
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Pragma", "no-cache")
@@ -1122,14 +1160,19 @@ class Handler(BaseHTTPRequestHandler):
                     platform = data.get("platform", "android")
                     if platform != "android":
                         raise ValueError("La plataforma de notificaciones no es válida.")
+                    theme_id = data.get("theme_id", "azul")
+                    if theme_id not in THEME_COLORS:
+                        theme_id = "azul"
+                    theme_color = THEME_COLORS[theme_id]
                     now = int(time.time())
                     con.execute("""INSERT INTO native_push_tokens
-                        (student_id, platform, token, created_at, last_seen)
-                        VALUES (?, ?, ?, ?, ?)
+                        (student_id, platform, token, theme_id, theme_color, created_at, last_seen)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(token) DO UPDATE SET student_id = excluded.student_id,
-                            platform = excluded.platform, last_seen = excluded.last_seen""",
-                        (student_id, platform, token, now, now))
-                self.send_json({"subscribed": True, "platform": "android"})
+                            platform = excluded.platform, theme_id = excluded.theme_id,
+                            theme_color = excluded.theme_color, last_seen = excluded.last_seen""",
+                        (student_id, platform, token, theme_id, theme_color, now, now))
+                self.send_json({"subscribed": True, "platform": "android", "theme_id": theme_id})
                 return
             if self.path == "/api/notifications/native/unsubscribe":
                 with connect() as con:
@@ -1551,14 +1594,18 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path == "/api/subjects":
                     name = required_text(data, "name")
                     color = required_color(data)
-                    abbreviation = required_abbreviation(data)
+                    abbreviation = required_abbreviation(data, name)
                     cur = con.execute("INSERT INTO subjects (name, color, abbreviation) VALUES (?, ?, ?)",
                                       (name, color, abbreviation))
                     result = {"id": cur.lastrowid, "name": name, "color": color,
                               "abbreviation": abbreviation}
                 elif self.path == "/api/sessions":
                     subject_id = positive_id(data, "subject_id")
-                    exists(con, "subjects", subject_id)
+                    subject = con.execute("SELECT name FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+                    if not subject:
+                        raise ValueError("El ramo seleccionado no existe.")
+                    if subject["name"].strip().lower() == "otro":
+                        raise ValueError("El ramo Otro solo puede utilizarse en el calendario.")
                     class_date = required_text(data, "class_date", 10)
                     try:
                         date.fromisoformat(class_date)
@@ -1708,7 +1755,11 @@ class Handler(BaseHTTPRequestHandler):
                                               WHERE id = ?""", (item_id,)).fetchone()
                     if method == "PATCH":
                         subject_id = positive_id(data, "subject_id")
-                        exists(con, "subjects", subject_id)
+                        subject = con.execute("SELECT name FROM subjects WHERE id = ?", (subject_id,)).fetchone()
+                        if not subject:
+                            raise ValueError("El ramo seleccionado no existe.")
+                        if subject["name"].strip().lower() == "otro":
+                            raise ValueError("El ramo Otro solo puede utilizarse en el calendario.")
                         class_date = required_text(data, "class_date", 10)
                         try:
                             date.fromisoformat(class_date)
@@ -1741,7 +1792,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif method == "PATCH" and table == "subjects":
                     name = required_text(data, "name")
                     color = required_color(data)
-                    abbreviation = required_abbreviation(data)
+                    abbreviation = required_abbreviation(data, name)
                     con.execute("UPDATE subjects SET name = ?, color = ?, abbreviation = ? WHERE id = ?",
                                 (name, color, abbreviation, item_id))
                     result = {"id": item_id, "name": name, "color": color,

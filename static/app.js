@@ -131,6 +131,10 @@ function fillSelect(id, entries, placeholder, selected = '', firstValue = '') {
   select.value = String(selected || '');
 }
 
+function attendanceSubjects() {
+  return overview.subjects.filter(subject => subject.name.trim().toLocaleLowerCase('es') !== 'otro');
+}
+
 function renderProfileSummary() {
   const summary = $('profile-session-summary');
   if (!summary) return;
@@ -217,17 +221,18 @@ async function openAvatarCrop(file) {
 
 async function loadOverview() {
   overview = await api('/api/overview');
+  const classSubjects = attendanceSubjects();
   renderStudents();
   renderSubjects();
   renderExportChoices();
   if (reportStudent !== 'all' && !overview.students.some(s => s.id === Number(reportStudent))) reportStudent = 'all';
   fillSelect('report-student-filter', overview.students, 'Todos los estudiantes', reportStudent, 'all');
-  if (currentSubject !== 'all' && !overview.subjects.some(s => s.id === Number(currentSubject))) currentSubject = 'all';
-  if (reportSubject !== 'all' && !overview.subjects.some(s => s.id === Number(reportSubject))) reportSubject = 'all';
-  if (!overview.subjects.some(s => s.id === Number(addSubject))) addSubject = overview.subjects[0]?.id || null;
-  fillSelect('subject-filter', overview.subjects, 'Todos los ramos', currentSubject, 'all');
-  fillSelect('report-subject-filter', overview.subjects, 'Todos los ramos', reportSubject, 'all');
-  fillSelect('add-subject', overview.subjects, 'Selecciona un ramo', addSubject);
+  if (currentSubject !== 'all' && !classSubjects.some(s => s.id === Number(currentSubject))) currentSubject = 'all';
+  if (reportSubject !== 'all' && !classSubjects.some(s => s.id === Number(reportSubject))) reportSubject = 'all';
+  if (!classSubjects.some(s => s.id === Number(addSubject))) addSubject = classSubjects[0]?.id || null;
+  fillSelect('subject-filter', classSubjects, 'Todos los ramos', currentSubject, 'all');
+  fillSelect('report-subject-filter', classSubjects, 'Todos los ramos', reportSubject, 'all');
+  fillSelect('add-subject', classSubjects, 'Selecciona un ramo', addSubject);
   fillSelect('event-subject', overview.subjects, 'Selecciona un ramo', overview.subjects[0]?.id || '');
   await refreshSubject();
   await refreshReport();
@@ -415,6 +420,7 @@ function applyThemeKit(themeId, remember = true) {
     try { localStorage.setItem('asistencia-theme-kit', kit.id); } catch {}
   }
   renderThemeKits();
+  syncNativeAppearance().catch(() => {});
 }
 
 function renderThemeKits() {
@@ -450,6 +456,22 @@ function urlBase64ToBytes(value) {
 function nativePushPlugin() {
   if (window.Capacitor?.getPlatform?.() !== 'android') return null;
   return window.Capacitor?.Plugins?.PushNotifications || null;
+}
+
+function nativeAppIconPlugin() {
+  if (window.Capacitor?.getPlatform?.() !== 'android') return null;
+  return window.Capacitor?.Plugins?.AppIcon || null;
+}
+
+async function syncNativeAppearance() {
+  const iconPlugin = nativeAppIconPlugin();
+  if (iconPlugin) await iconPlugin.setTheme({ theme: activeThemeKit });
+  const token = savedNativePushToken();
+  if (token && studentState.authenticated) {
+    await api('/api/notifications/native/subscribe', {
+      token, platform: 'android', theme_id: activeThemeKit
+    });
+  }
 }
 
 function savedNativePushToken() {
@@ -622,7 +644,9 @@ async function toggleNotifications() {
           throw new Error('No se concedió permiso para enviar notificaciones.');
         }
         const token = await registerNativePush(nativePush);
-        await api('/api/notifications/native/subscribe', { token, platform: 'android' });
+        await api('/api/notifications/native/subscribe', {
+          token, platform: 'android', theme_id: activeThemeKit
+        });
         saveNativePushToken(token);
         message('Notificaciones nativas activadas en este teléfono.');
       }
@@ -758,13 +782,19 @@ function renderSubjects() {
       const abbreviation = element('input');
       abbreviation.value = subject.abbreviation;
       abbreviation.required = true;
-      abbreviation.maxLength = 3;
+      abbreviation.maxLength = subject.name.trim().toLocaleLowerCase('es') === 'otro' ? 4 : 3;
       abbreviation.className = 'subject-abbreviation-input';
       abbreviation.setAttribute('aria-label', 'Diminutivo del ramo');
       abbreviation.setAttribute('placeholder', 'ABC');
-      abbreviation.addEventListener('input', () => {
-        abbreviation.value = abbreviation.value.toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ]/g, '').slice(0, 3);
-      });
+      const syncEditedAbbreviation = () => {
+        const isOther = input.value.trim().toLocaleLowerCase('es') === 'otro';
+        abbreviation.maxLength = isOther ? 4 : 3;
+        if (isOther) abbreviation.value = 'OTRO';
+        else abbreviation.value = abbreviation.value.toUpperCase()
+          .replace(/[^A-ZÁÉÍÓÚÑ]/g, '').slice(0, 3);
+      };
+      input.addEventListener('input', syncEditedAbbreviation);
+      abbreviation.addEventListener('input', syncEditedAbbreviation);
       const save = element('button', '', 'Guardar');
       save.type = 'submit';
       const cancel = element('button', 'secondary-button', 'Cancelar');
@@ -810,7 +840,7 @@ function renderExportChoices() {
     ? 'Como administrador puedes escoger estudiantes, ramos y tipos de información.'
     : studentState.authenticated ? 'La descarga incluirá únicamente tus propios datos.'
       : 'Inicia sesión para descargar información.';
-  for (const [type, entries] of [['students', studentEntries], ['subjects', overview.subjects]]) {
+  for (const [type, entries] of [['students', studentEntries], ['subjects', attendanceSubjects()]]) {
     const list = $(`export-${type}-list`);
     list.replaceChildren();
     const all = $(`export-all-${type}`);
@@ -851,7 +881,7 @@ function updateExportCount() {
 
 async function refreshSubject() {
   const subject = currentSubject;
-  const canAdd = overview.subjects.length > 0;
+  const canAdd = attendanceSubjects().length > 0;
   $('open-class-editor').disabled = !canAdd;
   $('sessions-list').replaceChildren();
   $('sessions-empty').hidden = true;
@@ -946,7 +976,7 @@ function resetClassEditor() {
   editingClassOriginal = null;
   $('class-editor-title').textContent = 'Agregar clase';
   $('class-save').textContent = 'Agregar clase';
-  $('add-subject').value = String(addSubject || overview.subjects[0]?.id || '');
+  $('add-subject').value = String(addSubject || attendanceSubjects()[0]?.id || '');
   $('class-date').value = new Date().toLocaleDateString('en-CA');
   $('class-title').value = '';
   $('class-has-attendance').checked = true;
@@ -2474,7 +2504,17 @@ $('class-editor-dialog').addEventListener('close', () => resetClassEditor());
 $('open-report-details').addEventListener('click', () => $('report-details-dialog').showModal());
 $('close-report-details').addEventListener('click', () => $('report-details-dialog').close());
 $('subject-abbreviation').addEventListener('input', event => {
-  event.target.value = event.target.value.toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ]/g, '').slice(0, 3);
+  const isOther = $('subject-name').value.trim().toLocaleLowerCase('es') === 'otro';
+  event.target.maxLength = isOther ? 4 : 3;
+  event.target.value = isOther ? 'OTRO' : event.target.value.toUpperCase()
+    .replace(/[^A-ZÁÉÍÓÚÑ]/g, '').slice(0, 3);
+});
+$('subject-name').addEventListener('input', event => {
+  const abbreviation = $('subject-abbreviation');
+  const isOther = event.target.value.trim().toLocaleLowerCase('es') === 'otro';
+  abbreviation.maxLength = isOther ? 4 : 3;
+  if (isOther) abbreviation.value = 'OTRO';
+  else if (abbreviation.value === 'OTRO') abbreviation.value = 'OTR';
 });
 $('subject-filter').addEventListener('change', async event => {
   currentSubject = event.target.value === 'all' ? 'all' : Number(event.target.value);
@@ -2804,22 +2844,70 @@ $('class-date').value = new Date().toLocaleDateString('en-CA');
 $('event-date').value = new Date().toLocaleDateString('en-CA');
 
 let installPrompt = null;
+const runningAsNativeAndroid = window.Capacitor?.getPlatform?.() === 'android';
+$('install-app').hidden = runningAsNativeAndroid;
 window.addEventListener('beforeinstallprompt', event => {
   event.preventDefault();
   installPrompt = event;
-  $('install-app').hidden = false;
 });
-$('install-app').addEventListener('click', async () => {
-  if (!installPrompt) return;
-  installPrompt.prompt();
-  await installPrompt.userChoice;
-  installPrompt = null;
-  $('install-app').hidden = true;
+$('install-app').addEventListener('click', () => {
+  $('profile-menu').hidden = true;
+  $('profile-toggle').setAttribute('aria-expanded', 'false');
+  $('install-help').classList.remove('error');
+  $('install-help').textContent = 'Selecciona una alternativa para continuar.';
+  $('install-dialog').showModal();
+});
+$('close-install-dialog').addEventListener('click', () => $('install-dialog').close());
+$('install-web-option').addEventListener('click', async () => {
+  const help = $('install-help');
+  help.classList.remove('error');
+  if (window.matchMedia('(display-mode: standalone)').matches || navigator.standalone) {
+    help.textContent = 'La aplicación web ya está instalada en este dispositivo.';
+    return;
+  }
+  if (installPrompt) {
+    installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === 'accepted') {
+      help.textContent = 'Instalación iniciada correctamente.';
+      installPrompt = null;
+    } else {
+      help.textContent = 'La instalación fue cancelada.';
+    }
+    return;
+  }
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+    help.textContent = 'En iPhone: abre esta página en Safari, pulsa Compartir y elige “Agregar a pantalla de inicio”.';
+  } else {
+    help.textContent = 'Abre el menú del navegador y elige “Instalar aplicación” o “Agregar a pantalla de inicio”.';
+  }
+});
+$('install-apk-option').addEventListener('click', async () => {
+  const help = $('install-help');
+  help.classList.remove('error');
+  if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+    help.classList.add('error');
+    help.textContent = 'La aplicación propia solo puede instalarse en Android.';
+    return;
+  }
+  help.textContent = 'Comprobando la versión disponible…';
+  try {
+    const status = await api('/api/apk-status');
+    if (!status.available) {
+      help.classList.add('error');
+      help.textContent = 'El APK aún no ha sido subido a la página.';
+      return;
+    }
+    help.textContent = 'Descargando Registro_de_Asistencia.apk…';
+    location.assign('/Registro_de_Asistencia.apk');
+  } catch (error) {
+    help.classList.add('error');
+    help.textContent = error.message;
+  }
 });
 window.addEventListener('appinstalled', () => {
   installPrompt = null;
-  $('install-app').hidden = true;
-  message('Aplicación instalada correctamente.');
+  $('install-help').textContent = 'Aplicación web instalada correctamente.';
 });
 window.addEventListener('offline', () => message('Sin conexión: puedes ver la interfaz, pero no consultar ni guardar datos.', true));
 window.addEventListener('online', () => message('Conexión recuperada. Actualizando información...'));
@@ -2840,6 +2928,7 @@ Promise.all([loadAdminStatus(), loadStudentStatus()])
       setTimeout(() => dismissAppIntro(true), remainingIntro);
     }
     await loadOverview();
+    await syncNativeAppearance().catch(() => {});
     if (!studentState.authenticated && !adminState.authenticated) await showIntroAccess();
   })
   .catch(error => message(error.message, true));

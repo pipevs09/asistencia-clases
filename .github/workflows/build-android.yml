@@ -41,23 +41,30 @@ jobs:
           test -n "$FIREBASE_ANDROID_CONFIG_BASE64"
           printf '%s' "$FIREBASE_ANDROID_CONFIG_BASE64" | base64 --decode > android/app/google-services.json
 
-      - name: Incorporar icono de notificaciones
-        run: |
-          mkdir -p android/app/src/main/res/drawable
-          cp ../static/notification-badge.png android/app/src/main/res/drawable/notification_badge.png
-
       - name: Sincronizar aplicación
         run: npx cap sync android
 
       - name: Generar iconos y pantalla inicial
         run: npm run android:assets
 
+      - name: Incorporar personalización nativa
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cp ../static/notification-badge.png android/app/src/main/res/drawable/notification_badge.png
+          mkdir -p android/app/src/main/java/cl
+          cp -R android-custom/java/cl/. android/app/src/main/java/cl/
+          cp -R android-custom/res/. android/app/src/main/res/
+          node scripts/prepare-android.mjs
+
       - name: Compilar APK de prueba
         run: ./android/gradlew -p android assembleDebug
+
+      - name: Nombrar APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Registro_de_Asistencia.apk
 
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
-          name: registro-asistencia-debug
-          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          name: Registro_de_Asistencia
+          path: mobile/Registro_de_Asistencia.apk
           if-no-files-found: error

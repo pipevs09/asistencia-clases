@@ -38,7 +38,11 @@ for (const job of jobs) {
         data: { url: job.payload.url || '/' },
         android: {
           priority: 'high',
-          notification: { icon: 'notification_badge', color: '#1767cc', tag: job.payload.tag }
+          notification: {
+            icon: 'notification_badge',
+            color: job.payload.color || '#1767cc',
+            tag: job.payload.tag
+          }
         }
       });
       successful.push({ kind: 'android', event_id: job.event_id, token_id: job.token_id,

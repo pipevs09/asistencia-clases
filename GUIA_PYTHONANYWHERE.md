@@ -124,3 +124,17 @@ pendientes cada cinco minutos.
 Cada estudiante debe iniciar sesión, abrir **Personalización** desde su perfil y
 pulsar **Activar notificaciones**. En iPhone la página debe estar instalada en
 la pantalla de inicio y abrirse desde su icono para poder conceder el permiso.
+
+## Publicar el APK para descargarlo desde la página
+
+El flujo **Crear APK Android** genera un archivo llamado
+`Registro_de_Asistencia.apk`. Descárgalo desde los artefactos de GitHub y súbelo
+en PythonAnywhere a esta ruta:
+
+```text
+~/asistencia_clases/static/Registro_de_Asistencia.apk
+```
+
+No es necesario reiniciar la página después de reemplazar únicamente este
+archivo. La opción **Instalar aplicación → Instalar aplicación propia
+(Android)** descargará siempre el APK que se encuentre en esa ruta.
